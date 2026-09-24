@@ -8,6 +8,7 @@ export const envSchema = z.object({
   REDIS_URL: z.string().url().optional(),
   RUGCHECK_API_URL: z.string().url().default('https://api.rugcheck.xyz/v1'),
   BIRDEYE_API_KEY: z.string().min(1).optional(),
+  HELIUS_WS_URL: z.string().url().optional(),
 
   // Rule 28: mock is allowed in paper mode only, for dev/CI.
   SECURITY_PROVIDER: z.enum(['rugcheck', 'mock']).default('rugcheck'),

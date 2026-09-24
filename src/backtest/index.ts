@@ -10,3 +10,4 @@ export * from './walkForward';
 export * from './seedRobustness';
 export * from './feeFloor';
 export * from './resample';
+export * from './sweepRunner';

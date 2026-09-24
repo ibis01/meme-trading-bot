@@ -1,0 +1,2181 @@
+{
+  "interval": "15m",
+  "slippageModel": "constant",
+  "mintsTested": 5,
+  "strategies": [
+    {
+      "strategy": "MEME_MOMENTUM_V1",
+      "configsTested": 216,
+      "positiveReturnConfigs": 0,
+      "leaderboard": [
+        {
+          "config": "m_1.2_1.5_h0.02_t0.02_16b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0337,
+          "avgTestWinRate": 0.1,
+          "avgTestTrades": 2.2,
+          "totalTrades": 11,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0381,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0862,
+              "winRate": 0.1667,
+              "trades": 6
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0334,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0106,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.03_t0.02_16b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0337,
+          "avgTestWinRate": 0.1,
+          "avgTestTrades": 2.2,
+          "totalTrades": 11,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0381,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0862,
+              "winRate": 0.1667,
+              "trades": 6
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0334,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0106,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.05_t0.02_16b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0337,
+          "avgTestWinRate": 0.1,
+          "avgTestTrades": 2.2,
+          "totalTrades": 11,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0381,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0862,
+              "winRate": 0.1667,
+              "trades": 6
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0334,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0106,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.02_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0338,
+          "avgTestWinRate": 0.1167,
+          "avgTestTrades": 2.6,
+          "totalTrades": 13,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0381,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0894,
+              "winRate": 0.25,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0106,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.03_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0338,
+          "avgTestWinRate": 0.1167,
+          "avgTestTrades": 2.6,
+          "totalTrades": 13,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0381,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0894,
+              "winRate": 0.25,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0106,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.05_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0338,
+          "avgTestWinRate": 0.1167,
+          "avgTestTrades": 2.6,
+          "totalTrades": 13,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0381,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0894,
+              "winRate": 0.25,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0106,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_0.8_1_h0.02_t0.02_16b",
+          "params": {
+            "min5mChangePercent": 0.8,
+            "min1hChangePercent": 1,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.039,
+          "avgTestWinRate": 0.2238,
+          "avgTestTrades": 3.6,
+          "totalTrades": 18,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0598,
+              "winRate": 0,
+              "trades": 4
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0647,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0419,
+              "winRate": 0.5,
+              "trades": 4
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0286,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_0.8_1_h0.03_t0.02_16b",
+          "params": {
+            "min5mChangePercent": 0.8,
+            "min1hChangePercent": 1,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.039,
+          "avgTestWinRate": 0.2238,
+          "avgTestTrades": 3.6,
+          "totalTrades": 18,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0598,
+              "winRate": 0,
+              "trades": 4
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0647,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0419,
+              "winRate": 0.5,
+              "trades": 4
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0286,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_0.8_1_h0.05_t0.02_16b",
+          "params": {
+            "min5mChangePercent": 0.8,
+            "min1hChangePercent": 1,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.039,
+          "avgTestWinRate": 0.2238,
+          "avgTestTrades": 3.6,
+          "totalTrades": 18,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0598,
+              "winRate": 0,
+              "trades": 4
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0647,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0419,
+              "winRate": 0.5,
+              "trades": 4
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0286,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_0.5_h0.02_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 0.5,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0418,
+          "avgTestWinRate": 0.1778,
+          "avgTestTrades": 3.8,
+          "totalTrades": 19,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0305,
+              "winRate": 0,
+              "trades": 3
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0998,
+              "winRate": 0.2222,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0382,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.01,
+              "winRate": 0,
+              "trades": 1
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_0.5_h0.03_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 0.5,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0418,
+          "avgTestWinRate": 0.1778,
+          "avgTestTrades": 3.8,
+          "totalTrades": 19,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0305,
+              "winRate": 0,
+              "trades": 3
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0998,
+              "winRate": 0.2222,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0382,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.01,
+              "winRate": 0,
+              "trades": 1
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_0.5_h0.05_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 0.5,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0418,
+          "avgTestWinRate": 0.1778,
+          "avgTestTrades": 3.8,
+          "totalTrades": 19,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0305,
+              "winRate": 0,
+              "trades": 3
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0998,
+              "winRate": 0.2222,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0382,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.01,
+              "winRate": 0,
+              "trades": 1
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1_h0.02_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0423,
+          "avgTestWinRate": 0.2111,
+          "avgTestTrades": 3.2,
+          "totalTrades": 16,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0552,
+              "winRate": 0,
+              "trades": 2
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.1079,
+              "winRate": 0.2222,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0178,
+              "winRate": 0.5,
+              "trades": 2
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1_h0.03_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0423,
+          "avgTestWinRate": 0.2111,
+          "avgTestTrades": 3.2,
+          "totalTrades": 16,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0552,
+              "winRate": 0,
+              "trades": 2
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.1079,
+              "winRate": 0.2222,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0178,
+              "winRate": 0.5,
+              "trades": 2
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1_h0.05_t0.02_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0423,
+          "avgTestWinRate": 0.2111,
+          "avgTestTrades": 3.2,
+          "totalTrades": 16,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0552,
+              "winRate": 0,
+              "trades": 2
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.1079,
+              "winRate": 0.2222,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0306,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0178,
+              "winRate": 0.5,
+              "trades": 2
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.02_t0.01_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.01,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0494,
+          "avgTestWinRate": 0.1067,
+          "avgTestTrades": 3,
+          "totalTrades": 15,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.033,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.1739,
+              "winRate": 0.2,
+              "trades": 10
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0282,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0118,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.02_t0.01_16b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.01,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0494,
+          "avgTestWinRate": 0.1067,
+          "avgTestTrades": 3,
+          "totalTrades": 15,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.033,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.1739,
+              "winRate": 0.2,
+              "trades": 10
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0282,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0118,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.03_t0.01_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.01,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0494,
+          "avgTestWinRate": 0.1067,
+          "avgTestTrades": 3,
+          "totalTrades": 15,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.033,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.1739,
+              "winRate": 0.2,
+              "trades": 10
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0282,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0118,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.03_t0.01_16b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.01,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0494,
+          "avgTestWinRate": 0.1067,
+          "avgTestTrades": 3,
+          "totalTrades": 15,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.033,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.1739,
+              "winRate": 0.2,
+              "trades": 10
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0282,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0118,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        },
+        {
+          "config": "m_1.2_1.5_h0.05_t0.01_8b",
+          "params": {
+            "min5mChangePercent": 1.2,
+            "min1hChangePercent": 1.5,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.01,
+            "timeStopBars": 8
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.0494,
+          "avgTestWinRate": 0.1067,
+          "avgTestTrades": 3,
+          "totalTrades": 15,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.033,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.1739,
+              "winRate": 0.2,
+              "trades": 10
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.0282,
+              "winRate": 0.3333,
+              "trades": 3
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0118,
+              "winRate": 0,
+              "trades": 1
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": 0,
+              "winRate": 0,
+              "trades": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "strategy": "MEME_MEANREV_V1",
+      "configsTested": 216,
+      "positiveReturnConfigs": 0,
+      "leaderboard": [
+        {
+          "config": "mr_-0.8_-0.8_h0.02_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -0.8,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2297,
+          "avgTestWinRate": 0.3518,
+          "avgTestTrades": 6.2,
+          "totalTrades": 31,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0331,
+              "winRate": 0.4286,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": 0.0188,
+              "winRate": 0.5556,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0786,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0038,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.8_-0.8_h0.03_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -0.8,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2297,
+          "avgTestWinRate": 0.3518,
+          "avgTestTrades": 6.2,
+          "totalTrades": 31,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0331,
+              "winRate": 0.4286,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": 0.0188,
+              "winRate": 0.5556,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0786,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0038,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.8_-0.8_h0.05_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -0.8,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2297,
+          "avgTestWinRate": 0.3518,
+          "avgTestTrades": 6.2,
+          "totalTrades": 31,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0331,
+              "winRate": 0.4286,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": 0.0188,
+              "winRate": 0.5556,
+              "trades": 9
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0786,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0038,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.6_-0.8_h0.02_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.6,
+            "max1hChangePercent": -0.8,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2357,
+          "avgTestWinRate": 0.3407,
+          "avgTestTrades": 6.4,
+          "totalTrades": 32,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0331,
+              "winRate": 0.4286,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0112,
+              "winRate": 0.5,
+              "trades": 10
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0786,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0038,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.6_-0.8_h0.03_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.6,
+            "max1hChangePercent": -0.8,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2357,
+          "avgTestWinRate": 0.3407,
+          "avgTestTrades": 6.4,
+          "totalTrades": 32,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0331,
+              "winRate": 0.4286,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0112,
+              "winRate": 0.5,
+              "trades": 10
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0786,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0038,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.6_-0.8_h0.05_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.6,
+            "max1hChangePercent": -0.8,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2357,
+          "avgTestWinRate": 0.3407,
+          "avgTestTrades": 6.4,
+          "totalTrades": 32,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0331,
+              "winRate": 0.4286,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0112,
+              "winRate": 0.5,
+              "trades": 10
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0786,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0038,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.8_-1.2_h0.02_t0.02_4b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 4
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2437,
+          "avgTestWinRate": 0.3165,
+          "avgTestTrades": 6.6,
+          "totalTrades": 33,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.001,
+              "winRate": 0.5714,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -1.028,
+              "winRate": 0.5,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.1237,
+              "winRate": 0.1111,
+              "trades": 9
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0411,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0246,
+              "winRate": 0,
+              "trades": 4
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.8_-1.2_h0.03_t0.02_4b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 4
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2437,
+          "avgTestWinRate": 0.3165,
+          "avgTestTrades": 6.6,
+          "totalTrades": 33,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.001,
+              "winRate": 0.5714,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -1.028,
+              "winRate": 0.5,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.1237,
+              "winRate": 0.1111,
+              "trades": 9
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0411,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0246,
+              "winRate": 0,
+              "trades": 4
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.8_-1.2_h0.05_t0.02_4b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 4
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2437,
+          "avgTestWinRate": 0.3165,
+          "avgTestTrades": 6.6,
+          "totalTrades": 33,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.001,
+              "winRate": 0.5714,
+              "trades": 7
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -1.028,
+              "winRate": 0.5,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.1237,
+              "winRate": 0.1111,
+              "trades": 9
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0411,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0246,
+              "winRate": 0,
+              "trades": 4
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.6_-1.2_h0.02_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.6,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2445,
+          "avgTestWinRate": 0.2988,
+          "avgTestTrades": 5.4,
+          "totalTrades": 27,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0528,
+              "winRate": 0.3333,
+              "trades": 6
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0333,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0821,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0028,
+              "winRate": 0.5,
+              "trades": 4
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.6_-1.2_h0.03_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.6,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2445,
+          "avgTestWinRate": 0.2988,
+          "avgTestTrades": 5.4,
+          "totalTrades": 27,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0528,
+              "winRate": 0.3333,
+              "trades": 6
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0333,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0821,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0028,
+              "winRate": 0.5,
+              "trades": 4
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.6_-1.2_h0.05_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.6,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2445,
+          "avgTestWinRate": 0.2988,
+          "avgTestTrades": 5.4,
+          "totalTrades": 27,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0528,
+              "winRate": 0.3333,
+              "trades": 6
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.0333,
+              "winRate": 0.375,
+              "trades": 8
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0821,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0028,
+              "winRate": 0.5,
+              "trades": 4
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.8_-1.2_h0.02_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2446,
+          "avgTestWinRate": 0.3371,
+          "avgTestTrades": 4.6,
+          "totalTrades": 23,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0471,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.01,
+              "winRate": 0.3333,
+              "trades": 6
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0821,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0319,
+              "winRate": 0.6667,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.8_-1.2_h0.03_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2446,
+          "avgTestWinRate": 0.3371,
+          "avgTestTrades": 4.6,
+          "totalTrades": 23,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0471,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.01,
+              "winRate": 0.3333,
+              "trades": 6
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0821,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0319,
+              "winRate": 0.6667,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.8_-1.2_h0.05_t0.02_16b",
+          "params": {
+            "max5mChangePercent": -0.8,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 16
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2446,
+          "avgTestWinRate": 0.3371,
+          "avgTestTrades": 4.6,
+          "totalTrades": 23,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0471,
+              "winRate": 0.4,
+              "trades": 5
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -0.01,
+              "winRate": 0.3333,
+              "trades": 6
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -1.0821,
+              "winRate": 0.2857,
+              "trades": 7
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0319,
+              "winRate": 0.6667,
+              "trades": 3
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0517,
+              "winRate": 0,
+              "trades": 2
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.4_-1.2_h0.02_t0.02_4b",
+          "params": {
+            "max5mChangePercent": -0.4,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 4
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.245,
+          "avgTestWinRate": 0.325,
+          "avgTestTrades": 7.8,
+          "totalTrades": 39,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0043,
+              "winRate": 0.625,
+              "trades": 8
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -1.0358,
+              "winRate": 0.5,
+              "trades": 12
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.1333,
+              "winRate": 0,
+              "trades": 9
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0272,
+              "winRate": 0.5,
+              "trades": 6
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0246,
+              "winRate": 0,
+              "trades": 4
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.4_-1.2_h0.03_t0.02_4b",
+          "params": {
+            "max5mChangePercent": -0.4,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 4
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.245,
+          "avgTestWinRate": 0.325,
+          "avgTestTrades": 7.8,
+          "totalTrades": 39,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0043,
+              "winRate": 0.625,
+              "trades": 8
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -1.0358,
+              "winRate": 0.5,
+              "trades": 12
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.1333,
+              "winRate": 0,
+              "trades": 9
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0272,
+              "winRate": 0.5,
+              "trades": 6
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0246,
+              "winRate": 0,
+              "trades": 4
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.4_-1.2_h0.05_t0.02_4b",
+          "params": {
+            "max5mChangePercent": -0.4,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.05,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 4
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.245,
+          "avgTestWinRate": 0.325,
+          "avgTestTrades": 7.8,
+          "totalTrades": 39,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": -0.0043,
+              "winRate": 0.625,
+              "trades": 8
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -1.0358,
+              "winRate": 0.5,
+              "trades": 12
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.1333,
+              "winRate": 0,
+              "trades": 9
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0272,
+              "winRate": 0.5,
+              "trades": 6
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0246,
+              "winRate": 0,
+              "trades": 4
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.6_-1.2_h0.02_t0.02_4b",
+          "params": {
+            "max5mChangePercent": -0.6,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.02,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 4
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2454,
+          "avgTestWinRate": 0.3159,
+          "avgTestTrades": 7.6,
+          "totalTrades": 38,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": 0.0092,
+              "winRate": 0.625,
+              "trades": 8
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -1.0513,
+              "winRate": 0.4545,
+              "trades": 11
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.1333,
+              "winRate": 0,
+              "trades": 9
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0272,
+              "winRate": 0.5,
+              "trades": 6
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0246,
+              "winRate": 0,
+              "trades": 4
+            }
+          ]
+        },
+        {
+          "config": "mr_-0.6_-1.2_h0.03_t0.02_4b",
+          "params": {
+            "max5mChangePercent": -0.6,
+            "max1hChangePercent": -1.2,
+            "hardStopPct": 0.03,
+            "trailingStopPct": 0.02,
+            "timeStopBars": 4
+          },
+          "mintsPassed": 0,
+          "mintsTested": 5,
+          "avgTestReturnPct": -0.2454,
+          "avgTestWinRate": 0.3159,
+          "avgTestTrades": 7.6,
+          "totalTrades": 38,
+          "flags": [],
+          "perMint": [
+            {
+              "mint": "7GCihgDB…",
+              "passed": false,
+              "returnPct": 0.0092,
+              "winRate": 0.625,
+              "trades": 8
+            },
+            {
+              "mint": "DezXAZ8z…",
+              "passed": false,
+              "returnPct": -1.0513,
+              "winRate": 0.4545,
+              "trades": 11
+            },
+            {
+              "mint": "EKpQGSJt…",
+              "passed": false,
+              "returnPct": -0.1333,
+              "winRate": 0,
+              "trades": 9
+            },
+            {
+              "mint": "HZ1JovNi…",
+              "passed": false,
+              "returnPct": -0.0272,
+              "winRate": 0.5,
+              "trades": 6
+            },
+            {
+              "mint": "3S8qX1Ms…",
+              "passed": false,
+              "returnPct": -0.0246,
+              "winRate": 0,
+              "trades": 4
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
