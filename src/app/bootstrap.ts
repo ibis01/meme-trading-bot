@@ -6,7 +6,7 @@ import { MockSecurityProvider } from '../security';
 import { IdempotencyService, RedisLike } from '../infra/idempotency';
 import { InMemoryKillSwitch } from '../state/killSwitch';
 import { InMemoryPnlStore } from '../state/dailyPnl';
-import { InMemoryPositionStore } from '../state/positions';
+import { InMemoryPositionLedger } from '../state/positions/inMemoryLedger';
 import { InMemoryProposalStore } from '../state/proposals';
 import { InMemoryExecutionStore } from '../state/executions';
 import { InMemorySignalStore } from '../state/signals';
@@ -32,7 +32,7 @@ class LocalRedis implements RedisLike {
 export function buildPaperApp(prices: Record<string, number> = {}) {
   const killSwitch = new InMemoryKillSwitch();
   const pnl = new InMemoryPnlStore();
-  const positions = new InMemoryPositionStore();
+  const positions = new InMemoryPositionLedger();
   const proposals = new InMemoryProposalStore();
   const executions = new InMemoryExecutionStore();
   const signals = new InMemorySignalStore();

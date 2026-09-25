@@ -1,13 +1,16 @@
 import { KillSwitchStore } from '../state/killSwitch';
 import { PnlStore } from '../state/dailyPnl';
-import { PositionStore } from '../state/positions';
+/** Rule 6: the RiskEngine only needs the open-position count. */
+export interface OpenPositionCounter {
+  getOpenCount(): Promise<number>;
+}
 import { evaluateRisk } from './evaluate';
 import { RiskDecision, RiskSnapshot, TradeProposal } from './types';
 
 export interface RiskEngineStores {
   killSwitch: KillSwitchStore;
   pnl: PnlStore;
-  positions: PositionStore;
+  positions: OpenPositionCounter;
 }
 
 /**

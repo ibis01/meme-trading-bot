@@ -8,7 +8,7 @@ import { MockSecurityProvider } from '../src/security';
 import { IdempotencyService, RedisLike } from '../src/infra/idempotency';
 import { InMemoryKillSwitch } from '../src/state/killSwitch';
 import { InMemoryPnlStore } from '../src/state/dailyPnl';
-import { InMemoryPositionStore } from '../src/state/positions';
+import { InMemoryPositionLedger } from '../src/state/positions/inMemoryLedger';
 import { InMemoryProposalStore } from '../src/state/proposals';
 import { InMemoryExecutionStore } from '../src/state/executions';
 import { InMemorySignalStore } from '../src/state/signals';
@@ -72,7 +72,7 @@ const market = (o: Partial<MarketSnapshot> = {}): MarketSnapshot => ({
 function buildLoop(batch: MarketSnapshot[], oneShot = false) {
   const killSwitch = new InMemoryKillSwitch();
   const pnl = new InMemoryPnlStore();
-  const positions = new InMemoryPositionStore();
+  const positions = new InMemoryPositionLedger();
   const riskEngine = new RiskEngine({ killSwitch, pnl, positions });
   const security = new MockSecurityProvider();
   const idempotency = new IdempotencyService(new MockRedis());
@@ -156,7 +156,7 @@ describe('SignalLoop (Rules 22, 24, 34)', () => {
       },
     };
     const killSwitch = new InMemoryKillSwitch();
-    const positions = new InMemoryPositionStore();
+    const positions = new InMemoryPositionLedger();
     const pnl = new InMemoryPnlStore();
     const riskEngine = new RiskEngine({ killSwitch, pnl, positions });
     const orchestrator = new ProposalOrchestrator({

@@ -7,7 +7,7 @@ import { InMemoryExecutionStore } from '../src/state/executions';
 import { InMemoryProposalStore, StoredProposal } from '../src/state/proposals';
 import { InMemoryKillSwitch } from '../src/state/killSwitch';
 import { InMemoryPnlStore } from '../src/state/dailyPnl';
-import { InMemoryPositionStore } from '../src/state/positions';
+import { InMemoryPositionLedger } from '../src/state/positions/inMemoryLedger';
 
 jest.mock('../src/config', () => ({
   config: {
@@ -31,22 +31,24 @@ class MockRedis implements RedisLike {
   async del(key: string) { return this.store.delete(key) ? 1 : 0; }
 }
 
-const baseProposal = (side: 'BUY' | 'SELL'): StoredProposal => ({
-  id: 'p1',
-  tradeRequestId: `sig:${side.toLowerCase()}`,
+const MINT = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+
+const proposal = (side: 'BUY' | 'SELL', requestSuffix: string): StoredProposal => ({
+  id: `p_${requestSuffix}`,
+  tradeRequestId: `sig:${requestSuffix}`,
   signalId: 's1',
   status: 'APPROVED',
   createdAt: Date.now(),
   decision: { allowed: true },
   proposal: {
-    tokenMint: 'mint',
+    tokenMint: MINT,
     side,
     amountSol: 0.05,
     expectedSlippageBps: 100,
     expectedPriceImpactBps: 150,
     quoteFetchedAt: Date.now(),
     security: {
-      tokenMint: 'mint',
+      tokenMint: MINT,
       mintAuthorityDisabled: true,
       freezeAuthorityDisabled: true,
       top10HolderPercent: 20,
@@ -62,7 +64,7 @@ const baseProposal = (side: 'BUY' | 'SELL'): StoredProposal => ({
 function mkExecutor() {
   const killSwitch = new InMemoryKillSwitch();
   const pnl = new InMemoryPnlStore();
-  const positions = new InMemoryPositionStore();
+  const positions = new InMemoryPositionLedger();
   const riskEngine = new RiskEngine({ killSwitch, pnl, positions });
   const proposals = new InMemoryProposalStore();
   const executions = new InMemoryExecutionStore();
@@ -74,20 +76,44 @@ function mkExecutor() {
   return { executor, pnl, positions };
 }
 
-describe('TradeExecutor — realized PnL reconciliation (Rule 7)', () => {
-  it('BUY confirmed does not touch daily P&L', async () => {
+describe('TradeExecutor — ledger reconciliation (P0-4b)', () => {
+  it('BUY creates an open position', async () => {
+    const { executor, positions } = mkExecutor();
+    await executor.execute(proposal('BUY', 'buy1'));
+    expect(await positions.getOpenCount()).toBe(1);
+    const p = await positions.get(MINT);
+    expect(p).not.toBeNull();
+    expect(p!.quantity).toBeCloseTo(0.05, 8);
+  });
+
+  it('SELL closes the position and does not crash', async () => {
+    const { executor, positions } = mkExecutor();
+    await executor.execute(proposal('BUY', 'buy1'));
+    const r = await executor.execute(proposal('SELL', 'sell1'));
+    expect(r.kind).toBe('CONFIRMED');
+    expect(await positions.getOpenCount()).toBe(0);
+  });
+
+  it('SELL without an open position logs a warning but still confirms the fill', async () => {
     const { executor, pnl } = mkExecutor();
-    await executor.execute(baseProposal('BUY'));
+    const r = await executor.execute(proposal('SELL', 'sell_no_pos'));
+    expect(r.kind).toBe('CONFIRMED');
     expect(await pnl.getToday()).toBe(0);
   });
 
-  it('SELL confirmed without cost basis does NOT crash and does NOT record fake PnL', async () => {
-    const { executor, pnl, positions } = mkExecutor();
-    await positions.increment();
-    const r = await executor.execute(baseProposal('SELL'));
-    expect(r.kind).toBe('CONFIRMED');
-    // Cost basis is unavailable (P0-4 pending), so PnL is not recorded — but
-    // the fill still completes and nothing crashes.
+  it('full BUY → SELL cycle produces zero realized PnL at the same price', async () => {
+    const { executor, pnl } = mkExecutor();
+    // Same oracle price for both sides → buy notional == sell notional
+    await executor.execute(proposal('BUY', 'cycle1'));
+    await executor.execute(proposal('SELL', 'cycle2'));
+    // Realized PnL is 0 because our SOL-notional model uses price=1 both ways
+    // and the notional was identical.
+    expect(await pnl.getToday()).toBeCloseTo(0, 8);
+  });
+
+  it('BUY does not touch daily PnL', async () => {
+    const { executor, pnl } = mkExecutor();
+    await executor.execute(proposal('BUY', 'buy_only'));
     expect(await pnl.getToday()).toBe(0);
   });
 });

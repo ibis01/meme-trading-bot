@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { RiskEngine } from '../risk/engine';
 import { KillSwitchStore } from '../state/killSwitch';
-import { PositionStore } from '../state/positions';
+import { PositionLedger } from '../state/positions/types';
 import { ProposalStore, StoredProposal } from '../state/proposals';
 import { ExecutionStore, StoredExecution } from '../state/executions';
 import { PnlStore } from '../state/dailyPnl';
@@ -13,7 +13,7 @@ import { logger } from '../utils/logger';
 export interface TradeExecutorDeps {
   riskEngine: RiskEngine;
   killSwitch: KillSwitchStore;
-  positions: PositionStore;
+  positions: PositionLedger;
   proposals: ProposalStore;
   executions: ExecutionStore;
   idempotency: IdempotencyService;
@@ -116,32 +116,52 @@ export class TradeExecutor {
       if (outcome.status === 'CONFIRMED') {
         await this.deps.proposals.updateStatus(proposal.id, 'EXECUTED');
 
-        // Rule 15: portfolio bookkeeping on confirmed fills only.
-        if (proposal.proposal.side === 'BUY') await this.deps.positions.increment();
-        else await this.deps.positions.decrement();
-
-        // Rule 7: reconcile realized P&L so the daily loss gate stays accurate.
-        // BUY: 0 realized (position opens). SELL: requires cost basis (P0-4).
+        // Rule 15 / Rule 7: update the ledger and reconcile realized P&L.
+        // Rule 23: a bookkeeping failure must not invalidate a real fill —
+        // log it loudly and continue. The daily loss gate will be stale until
+        // a reconciliation pass corrects it.
         try {
-          const realized = computeRealizedPnlSol({
-            side: proposal.proposal.side,
-            filledAmountSol: outcome.filledAmountSol,
-            // P0-4 will supply costBasisSol from the position ledger.
-            costBasisSol: undefined,
-          });
-          if (realized !== 0) {
-            await this.deps.pnl.addSol(realized);
-            logger.info(
-              { event: 'PNL_RECORDED', tradeRequestId: proposal.tradeRequestId, realizedSol: realized },
-              'Realized PnL recorded',
-            );
+          if (proposal.proposal.side === 'BUY') {
+            // P0-4b interim model: quantity == SOL notional, priceSol == 1.
+            // When live execution lands, the provider will report units and
+            // price-per-unit separately and the ledger will track them natively.
+            await this.deps.positions.open({
+              tokenMint: proposal.proposal.tokenMint,
+              tradeRequestId: proposal.tradeRequestId,
+              quantity: outcome.filledAmountSol,
+              priceSol: 1,
+              signature: outcome.txSignature,
+            });
+          } else {
+            const held = await this.deps.positions.get(proposal.proposal.tokenMint);
+            if (held && held.quantity > 0) {
+              const closeResult = await this.deps.positions.close({
+                tokenMint: proposal.proposal.tokenMint,
+                tradeRequestId: proposal.tradeRequestId,
+                quantity: held.quantity,
+                priceSol: 1,
+                signature: outcome.txSignature,
+              });
+              await this.deps.pnl.addSol(closeResult.realizedPnlSol);
+              logger.info(
+                {
+                  event: 'PNL_RECORDED',
+                  tradeRequestId: proposal.tradeRequestId,
+                  realizedSol: closeResult.realizedPnlSol,
+                },
+                'Realized PnL recorded',
+              );
+            } else {
+              logger.warn(
+                { event: 'SELL_WITHOUT_POSITION', tradeRequestId: proposal.tradeRequestId },
+                'Sell filled but no position was on record — PnL not reconciled',
+              );
+            }
           }
         } catch (err) {
-          // Rule 23: never silently swallow. Record and continue — the fill
-          // already happened, so failing the whole executor would be wrong.
           logger.error(
-            { event: 'PNL_RECORD_FAILED', tradeRequestId: proposal.tradeRequestId, err },
-            'Failed to record realized PnL — daily loss gate will be stale until fixed',
+            { event: 'LEDGER_RECONCILE_FAILED', tradeRequestId: proposal.tradeRequestId, err },
+            'Failed to reconcile position/PnL — gate will be stale until corrected',
           );
         }
         logger.info(

@@ -7,7 +7,7 @@ import { InMemoryExecutionStore } from '../src/state/executions';
 import { InMemoryProposalStore, StoredProposal } from '../src/state/proposals';
 import { InMemoryKillSwitch } from '../src/state/killSwitch';
 import { InMemoryPnlStore } from '../src/state/dailyPnl';
-import { InMemoryPositionStore } from '../src/state/positions';
+import { InMemoryPositionLedger } from '../src/state/positions/inMemoryLedger';
 
 jest.mock('../src/config', () => ({
   config: {
@@ -69,7 +69,7 @@ const safeProposal = (o: Partial<StoredProposal> = {}): StoredProposal => ({
 function mkExecutor() {
   const killSwitch = new InMemoryKillSwitch();
   const pnl = new InMemoryPnlStore();
-  const positions = new InMemoryPositionStore();
+  const positions = new InMemoryPositionLedger();
   const riskEngine = new RiskEngine({ killSwitch, pnl, positions });
   const proposals = new InMemoryProposalStore();
   const executions = new InMemoryExecutionStore();
@@ -133,10 +133,10 @@ describe('TradeExecutor (Rules 11, 14, 24, 25, 34)', () => {
 
   it('DECREMENTS positions on SELL', async () => {
     const { executor, positions } = mkExecutor();
-    await positions.increment();
-    await positions.increment();
+    await positions.open({ tokenMint: 'mintA', tradeRequestId: 'tr_a', quantity: 0.05, priceSol: 1, signature: 'sig_a' });
+    await positions.open({ tokenMint: 'mintB', tradeRequestId: 'tr_b', quantity: 0.05, priceSol: 1, signature: 'sig_b' });
     const sell = safeProposal({
-      proposal: { ...safeProposal().proposal, side: 'SELL' },
+      proposal: { ...safeProposal().proposal, side: 'SELL', tokenMint: 'mintA' },
     });
     await executor.execute(sell);
     expect(await positions.getOpenCount()).toBe(1);

@@ -13,8 +13,9 @@ import { getRedis } from '../infra/redis';
 import { getPool } from '../infra/db';
 import { RedisKillSwitch, KillSwitchStore } from '../state/killSwitch';
 import { InMemoryPnlStore, PostgresPnlStore, PnlStore } from '../state/dailyPnl';
-import { InMemoryPositionStore, PositionStore } from '../state/positions';
-import { PostgresPositionStore } from '../state/positionsPg';
+import { InMemoryPositionLedger } from '../state/positions/inMemoryLedger';
+import { PostgresPositionLedger } from '../state/positions/postgresLedger';
+import { PositionLedger } from '../state/positions/types';
 import { InMemoryProposalStore, PostgresProposalStore, ProposalStore } from '../state/proposals';
 import { InMemoryExecutionStore, PostgresExecutionStore, ExecutionStore } from '../state/executions';
 import { InMemorySignalStore, PostgresSignalStore, SignalStore } from '../state/signals';
@@ -25,7 +26,7 @@ import { SecurityProvider } from '../security/types';
 
 export interface ProductionApp {
   killSwitch: KillSwitchStore;
-  positions: PositionStore;
+  positions: PositionLedger;
   proposals: ProposalStore;
   executions: ExecutionStore;
   signals: SignalStore;
@@ -63,7 +64,7 @@ export function buildProductionApp(): ProductionApp {
 
   let storeBackend: 'postgres' | 'memory';
   let pnl: PnlStore;
-  let positions: PositionStore;
+  let positions: PositionLedger;
   let proposals: ProposalStore;
   let executions: ExecutionStore;
   let signals: SignalStore;
@@ -73,7 +74,7 @@ export function buildProductionApp(): ProductionApp {
     const pool = getPool();
     storeBackend = 'postgres';
     pnl = new PostgresPnlStore(pool);
-    positions = new PostgresPositionStore(pool);
+    positions = new PostgresPositionLedger(pool);
     proposals = new PostgresProposalStore(pool);
     executions = new PostgresExecutionStore(pool);
     signals = new PostgresSignalStore(pool);
@@ -82,7 +83,7 @@ export function buildProductionApp(): ProductionApp {
     storeBackend = 'memory';
     logger.warn('DATABASE_URL not set — using in-memory stores.');
     pnl = new InMemoryPnlStore();
-    positions = new InMemoryPositionStore();
+    positions = new InMemoryPositionLedger();
     proposals = new InMemoryProposalStore();
     executions = new InMemoryExecutionStore();
     signals = new InMemorySignalStore();
