@@ -76,7 +76,7 @@ function mkExecutor() {
   const idempotency = new IdempotencyService(new MockRedis());
   const provider = new PaperExecutionProvider(new StaticPriceOracle({ mint: 0.01 }));
   const executor = new TradeExecutor({
-    riskEngine, killSwitch, positions, proposals, executions, idempotency, provider,
+    riskEngine, killSwitch, positions, proposals, executions, idempotency, provider, pnl,
   });
   return { executor, proposals, executions, killSwitch, positions };
 }

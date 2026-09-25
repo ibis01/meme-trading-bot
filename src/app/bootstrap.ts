@@ -46,7 +46,7 @@ export function buildPaperApp(prices: Record<string, number> = {}) {
     riskEngine, security, idempotency, proposals, signals,
   });
   const executor = new TradeExecutor({
-    riskEngine, killSwitch, positions, proposals, executions, idempotency, provider,
+    riskEngine, killSwitch, positions, proposals, executions, idempotency, provider, pnl,
   });
 
   return {

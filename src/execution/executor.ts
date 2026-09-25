@@ -4,6 +4,8 @@ import { KillSwitchStore } from '../state/killSwitch';
 import { PositionStore } from '../state/positions';
 import { ProposalStore, StoredProposal } from '../state/proposals';
 import { ExecutionStore, StoredExecution } from '../state/executions';
+import { PnlStore } from '../state/dailyPnl';
+import { computeRealizedPnlSol } from './realizedPnl';
 import { IdempotencyService } from '../infra/idempotency';
 import { ExecutionProvider } from './types';
 import { logger } from '../utils/logger';
@@ -16,6 +18,8 @@ export interface TradeExecutorDeps {
   executions: ExecutionStore;
   idempotency: IdempotencyService;
   provider: ExecutionProvider;
+  /** Rule 7: confirmed fills must reconcile into daily P&L. */
+  pnl: PnlStore;
 }
 
 export type ExecuteResult =
@@ -111,9 +115,35 @@ export class TradeExecutor {
 
       if (outcome.status === 'CONFIRMED') {
         await this.deps.proposals.updateStatus(proposal.id, 'EXECUTED');
+
         // Rule 15: portfolio bookkeeping on confirmed fills only.
         if (proposal.proposal.side === 'BUY') await this.deps.positions.increment();
         else await this.deps.positions.decrement();
+
+        // Rule 7: reconcile realized P&L so the daily loss gate stays accurate.
+        // BUY: 0 realized (position opens). SELL: requires cost basis (P0-4).
+        try {
+          const realized = computeRealizedPnlSol({
+            side: proposal.proposal.side,
+            filledAmountSol: outcome.filledAmountSol,
+            // P0-4 will supply costBasisSol from the position ledger.
+            costBasisSol: undefined,
+          });
+          if (realized !== 0) {
+            await this.deps.pnl.addSol(realized);
+            logger.info(
+              { event: 'PNL_RECORDED', tradeRequestId: proposal.tradeRequestId, realizedSol: realized },
+              'Realized PnL recorded',
+            );
+          }
+        } catch (err) {
+          // Rule 23: never silently swallow. Record and continue — the fill
+          // already happened, so failing the whole executor would be wrong.
+          logger.error(
+            { event: 'PNL_RECORD_FAILED', tradeRequestId: proposal.tradeRequestId, err },
+            'Failed to record realized PnL — daily loss gate will be stale until fixed',
+          );
+        }
         logger.info(
           { event: 'EXECUTION_CONFIRMED', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature, provider: this.deps.provider.name },
           'Execution confirmed',

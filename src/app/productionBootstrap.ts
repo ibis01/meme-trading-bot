@@ -103,7 +103,7 @@ export function buildProductionApp(): ProductionApp {
       : new PaperExecutionProvider(new StaticPriceOracle({}));
 
   const executor = new TradeExecutor({
-    riskEngine, killSwitch, positions, proposals, executions, idempotency, provider,
+    riskEngine, killSwitch, positions, proposals, executions, idempotency, provider, pnl,
   });
 
   logger.info(
