@@ -3,11 +3,13 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 
+let mockBirdeyeApiKey: string | undefined = 'test-key';
+
 jest.mock('../src/config', () => ({
   config: {
     TRADING_MODE: 'paper',
     SOLANA_RPC_URL: 'https://mainnet.helius-rpc.com/?api-key=test',
-    BIRDEYE_API_KEY: 'test-key',
+    get BIRDEYE_API_KEY() { return mockBirdeyeApiKey; },
     DATABASE_URL: undefined,
     REDIS_URL: undefined,
     MAX_POSITION_SIZE_SOL: 0.1,
@@ -23,13 +25,12 @@ jest.mock('../src/config', () => ({
   },
 }));
 
-// Mock the composite provider so no network is required.
-jest.mock('../src/data/composite', () => ({
-  CompositeMarketProvider: class {
-    readonly name = 'composite-mock';
-    async fetchSnapshot(_mint: string): Promise<MarketSnapshot | null> {
+jest.mock('../src/data/birdeye', () => ({
+  BirdeyeMarketProvider: class {
+    readonly name = 'birdeye-mock';
+    async fetchSnapshot(mint: string): Promise<MarketSnapshot | null> {
       return {
-        tokenMint: _mint,
+        tokenMint: mint,
         fetchedAt: Date.now(),
         priceUsd: 0.001,
         liquidityUsd: 100_000,
@@ -44,23 +45,13 @@ jest.mock('../src/data/composite', () => ({
   },
 }));
 
-jest.mock('../src/data/helius', () => ({
-  HeliusMarketProvider: class {
-    readonly name = 'helius-mock';
-  },
-}));
-jest.mock('../src/data/birdeye', () => ({
-  BirdeyeMarketProvider: class {
-    readonly name = 'birdeye-mock';
-  },
-}));
-
-describe('buildFeed (P1-11)', () => {
+describe('buildFeed (P1-11 / P1-11b)', () => {
   const OLD = process.env;
 
   beforeEach(() => {
     jest.resetModules();
     process.env = { ...OLD };
+    mockBirdeyeApiKey = 'test-key';
   });
 
   afterAll(() => {
@@ -91,9 +82,7 @@ describe('buildFeed (P1-11)', () => {
   it('throws when MARKET_SOURCE=provider and no mints configured', async () => {
     process.env.MARKET_SOURCE = 'provider';
     delete process.env.RECORDER_MINTS;
-    // Ensure mints.txt is not reachable in the test cwd.
     const { buildFeed } = await import('../src/app/runLoop');
-    // Save current cwd and switch to a temp dir with no mints.txt
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'noloop-'));
     const oldCwd = process.cwd();
     try {
@@ -103,5 +92,13 @@ describe('buildFeed (P1-11)', () => {
       process.chdir(oldCwd);
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('throws when BIRDEYE_API_KEY is missing (P1-11b fail-fast)', async () => {
+    process.env.MARKET_SOURCE = 'provider';
+    process.env.RECORDER_MINTS = 'So11111111111111111111111111111111111111112';
+    mockBirdeyeApiKey = undefined;
+    const { buildFeed } = await import('../src/app/runLoop');
+    expect(() => buildFeed()).toThrow(/BIRDEYE_API_KEY is required/);
   });
 });

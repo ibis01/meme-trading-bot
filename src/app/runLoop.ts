@@ -4,9 +4,7 @@ import path from 'path';
 import { buildProductionApp } from './productionBootstrap';
 import { SignalLoop } from './signalLoop';
 import { FixtureFeed, ProviderFeed, MarketFeed } from '../data/feed';
-import { HeliusMarketProvider } from '../data/helius';
 import { BirdeyeMarketProvider } from '../data/birdeye';
-import { CompositeMarketProvider } from '../data/composite';
 import { MarketDataProvider } from '../data/types';
 import { MomentumStrategy, defaultMomentumConfig } from '../strategy/momentum';
 import { MarketSnapshot } from '../strategy/types';
@@ -49,34 +47,17 @@ function readMints(): string[] {
     .filter((l) => l && !l.startsWith('#'));
 }
 
-function extractHeliusKey(rpcUrl: string): string {
-  try {
-    const u = new URL(rpcUrl);
-    return u.searchParams.get('api-key') ?? '';
-  } catch {
-    return '';
-  }
-}
-
 function buildProvider(): MarketDataProvider {
-  const heliusKey = extractHeliusKey(config.SOLANA_RPC_URL);
-  const helius = heliusKey
-    ? new HeliusMarketProvider(heliusKey, config.SOLANA_RPC_URL)
-    : null;
-  const birdeye = config.BIRDEYE_API_KEY
-    ? new BirdeyeMarketProvider(config.BIRDEYE_API_KEY)
-    : null;
-
-  if (helius && birdeye) return new CompositeMarketProvider(helius, birdeye);
-  if (birdeye) {
-    logger.warn('Helius unavailable — falling back to Birdeye-only provider.');
-    return birdeye;
+  // P1-11b: Birdeye is the sole market data source. Helius DAS does not
+  // expose price/liquidity/volume/holders, so using it as a fallback
+  // silently fed zeros into the Risk Engine. Fail fast instead.
+  const apiKey = config.BIRDEYE_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'BIRDEYE_API_KEY is required. Helius DAS does not expose price/liquidity/volume/holders (P1-11b).',
+    );
   }
-  if (helius) {
-    logger.warn('Birdeye unavailable — falling back to Helius-only provider.');
-    return helius;
-  }
-  throw new Error('No market data provider available: set SOLANA_RPC_URL (Helius) and/or BIRDEYE_API_KEY.');
+  return new BirdeyeMarketProvider(apiKey);
 }
 
 export function buildFeed(): MarketFeed {
