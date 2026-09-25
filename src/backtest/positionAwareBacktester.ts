@@ -44,7 +44,8 @@ export class PositionAwareBacktester {
 
     for (let i = 0; i < bars.length; i++) {
       const bar = bars[i];
-      if (!bar.nextPriceUsd || bar.nextPriceUsd <= 0) {
+      // We only need the current bar to be valid; the exit fill is at bar.priceUsd.
+      if (!bar.priceUsd || bar.priceUsd <= 0) {
         equityCurveSol.push(equity);
         continue;
       }
@@ -164,7 +165,9 @@ export class PositionAwareBacktester {
     _slipSoFar: number,
     _onClose: () => void,
   ): number {
-    const exit = bar.nextPriceUsd;
+    // Rule 18: exit fill is the price on the bar where the stop triggered,
+    // NOT the next bar's price. Using nextPriceUsd here is future data.
+    const exit = bar.priceUsd;
     const entry = position.entryPriceUsd;
     const grossReturn = (exit - entry) / entry;
 
