@@ -31,7 +31,8 @@
     "pool:listen": "tsx src/app/poolListenerCli.ts",
     "sniff": "tsx src/app/sniffCli.ts",
     "capture:full": "tsx src/app/captureFullTxCli.ts",
-    "new:pairs": "tsx src/app/newPairsCli.ts"
+    "new:pairs": "tsx src/app/newPairsCli.ts",
+    "smoke:birdeye": "tsx scripts/smoke-birdeye.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.0",
