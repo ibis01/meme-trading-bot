@@ -5,6 +5,7 @@ import { buildProductionApp } from './productionBootstrap';
 import { SignalLoop } from './signalLoop';
 import { FixtureFeed, ProviderFeed, MarketFeed } from '../data/feed';
 import { BirdeyeMarketProvider } from '../data/birdeye';
+import { DexScreenerMarketProvider } from '../data/dexscreener';
 import { MarketDataProvider } from '../data/types';
 import { MomentumStrategy, defaultMomentumConfig } from '../strategy/momentum';
 import { MarketSnapshot } from '../strategy/types';
@@ -48,13 +49,16 @@ function readMints(): string[] {
 }
 
 function buildProvider(): MarketDataProvider {
-  // P1-11b: Birdeye is the sole market data source. Helius DAS does not
-  // expose price/liquidity/volume/holders, so using it as a fallback
-  // silently fed zeros into the Risk Engine. Fail fast instead.
+  // P1-17: DexScreener is the default live provider — no API key, ~300 req/min.
+  if ((process.env.MARKET_SOURCE ?? 'fixture') === 'dexscreener') {
+    return new DexScreenerMarketProvider();
+  }
+
+  // Birdeye retained as fallback for when MARKET_SOURCE=provider.
   const apiKey = config.BIRDEYE_API_KEY;
   if (!apiKey) {
     throw new Error(
-      'BIRDEYE_API_KEY is required. Helius DAS does not expose price/liquidity/volume/holders (P1-11b).',
+      'BIRDEYE_API_KEY is required for MARKET_SOURCE=provider (Birdeye). Helius DAS does not expose price/liquidity/volume/holders (P1-11b).',
     );
   }
   return new BirdeyeMarketProvider(apiKey);
@@ -63,7 +67,7 @@ function buildProvider(): MarketDataProvider {
 export function buildFeed(): MarketFeed {
   const source = process.env.MARKET_SOURCE ?? 'fixture';
 
-  if (source === 'provider') {
+  if (source === 'provider' || source === 'dexscreener') {
     const mints = readMints();
     if (mints.length === 0) {
       throw new Error(
@@ -77,7 +81,7 @@ export function buildFeed(): MarketFeed {
 
   logger.warn(
     { source },
-    'DEMO MODE — using FixtureFeed with synthetic data. Set MARKET_SOURCE=provider for real data.',
+    'DEMO MODE — using FixtureFeed with synthetic data. Set MARKET_SOURCE=dexscreener for real data.',
   );
   return new FixtureFeed([demoSnapshot()]);
 }

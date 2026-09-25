@@ -13,9 +13,9 @@
  */
 import '../src/infra/netDefaults';
 import 'dotenv/config';
-import { BirdeyeMarketProvider } from '../src/data/birdeye';
+import { DexScreenerMarketProvider } from '../src/data/dexscreener';
 
-const DEFAULT_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC
+const DEFAULT_MINT = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'; // BONK
 const FRESH_MS = 10_000;
 
 async function main(): Promise<number> {
@@ -26,7 +26,7 @@ async function main(): Promise<number> {
   }
 
   const mint = process.argv[2] ?? DEFAULT_MINT;
-  const provider = new BirdeyeMarketProvider(apiKey);
+  const provider = new DexScreenerMarketProvider();
 
   console.log(`Mint    : ${mint}`);
   console.log(`Provider: ${provider.name ?? 'birdeye'}`);
