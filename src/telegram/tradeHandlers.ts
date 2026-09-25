@@ -62,47 +62,34 @@ export class TelegramTradeHandler {
     }
 
     const execResult = await this.deps.executor.execute(orchResult.stored);
-    const execKind = (execResult as { kind?: string }).kind ?? 'UNKNOWN';
 
-    if (execKind === 'CONFIRMED') {
-      return {
-        ok: true,
-        message: `✅ Executed (paper). Signature: ${(execResult as any).execution?.txSignature?.slice(0, 12) ?? 'n/a'}…`,
-      };
+    // Exhaustive switch — TypeScript proves every ExecuteResult variant is
+    // handled; adding a new variant becomes a compile error, not a silent
+    // fall-through to "unknown executor state".
+    switch (execResult.kind) {
+      case 'CONFIRMED':
+        return {
+          ok: true,
+          message: `✅ Executed (paper). Signature: ${execResult.execution.txSignature?.slice(0, 12) ?? 'n/a'}…`,
+        };
+      case 'DUPLICATE':
+        return { ok: false, message: 'Already executed.' };
+      case 'REJECTED':
+        return { ok: false, message: `Execution blocked: ${execResult.reason}` };
+      case 'FAILED':
+        return { ok: false, message: `Execution failed: ${execResult.reason}` };
+      case 'SUBMITTED':
+        return { ok: true, message: '📤 Submitted — awaiting confirmation.' };
+      case 'UNKNOWN':
+        return { ok: false, message: '⚠️ Execution UNKNOWN — manual reconciliation required.' };
+      default: {
+        // If this line fails to compile, ExecuteResult gained a variant
+        // that handle() does not yet know about. Add a case above; do not
+        // silence the error.
+        const _exhaustive: never = execResult;
+        return { ok: false, message: `Execution failed: unknown executor state (${String(_exhaustive)}).` };
+      }
     }
-    if (execKind === 'DUPLICATE') {
-      return { ok: false, message: 'Already executed.' };
-    }
-    if (execKind === 'REJECTED') {
-      return {
-        ok: false,
-        message: `Execution blocked: ${(execResult as any).reason}`,
-      };
-    }
-    if (execKind === 'FAILED') {
-      return {
-        ok: false,
-        message: `Execution failed: ${(execResult as any).reason ?? 'Unknown error'}`,
-      };
-    }
-    if (execKind === 'SUBMITTED') {
-      return {
-        ok: true,
-        message: '📤 Submitted — awaiting confirmation.',
-      };
-    }
-    if (execKind === 'UNKNOWN') {
-      return {
-        ok: false,
-        message: '⚠️ Execution UNKNOWN — manual reconciliation required.',
-      };
-    }
-
-    // Exhaustive fallback for any unexpected executor state.
-    return {
-      ok: false,
-      message: 'Execution failed: unknown executor state.',
-    };
   }
 
   /**
