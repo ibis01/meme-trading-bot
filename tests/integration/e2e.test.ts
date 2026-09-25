@@ -42,12 +42,19 @@ describeIf('E2E: pipeline + restart durability', () => {
       await pool.query(fs.readFileSync(path.join(dir, f), 'utf8'));
     }
     // Clean slate — order matters (FKs).
-    await pool.query('TRUNCATE executions, trade_proposals, signals, tokens RESTART IDENTITY CASCADE');
+    await pool.query('TRUNCATE position_fills, positions, executions, trade_proposals, signals, tokens RESTART IDENTITY CASCADE');
+    // portfolio_state is legacy (P0-4 moved live position state to `positions`).
+    // Reset it anyway so any leftover consumers see a clean slate.
     await pool.query('UPDATE portfolio_state SET open_positions = 0');
     await pool.query('DELETE FROM daily_pnl');
   });
 
   afterAll(async () => {
+    // Close the app's Postgres pool so Jest can exit cleanly.
+    try {
+      const { closePool } = await import('../../src/infra/db');
+      await closePool();
+    } catch { /* ignore */ }
     await pool.end();
   });
 
@@ -109,8 +116,8 @@ describeIf('E2E: pipeline + restart durability', () => {
     expect(executions.rows[0].status).toBe('CONFIRMED');
     expect(executions.rows[0].tx_signature).toMatch(/^paper_/);
 
-    const state = await pool.query('SELECT open_positions FROM portfolio_state WHERE id = 1');
-    expect(Number(state.rows[0].open_positions)).toBeGreaterThanOrEqual(1);
+    const open = await pool.query("SELECT COUNT(*)::int AS c FROM positions WHERE quantity > 0");
+    expect(open.rows[0].c).toBeGreaterThanOrEqual(1);
 
     await closeRedis();
     await closePool();
@@ -129,8 +136,8 @@ describeIf('E2E: pipeline + restart durability', () => {
     const props = await freshPool.query("SELECT COUNT(*)::int AS c FROM trade_proposals WHERE status = 'EXECUTED'");
     expect(props.rows[0].c).toBeGreaterThanOrEqual(1);
 
-    const pos = await freshPool.query('SELECT open_positions FROM portfolio_state WHERE id = 1');
-    expect(Number(pos.rows[0].open_positions)).toBeGreaterThanOrEqual(1);
+    const pos = await freshPool.query("SELECT COUNT(*)::int AS c FROM positions WHERE quantity > 0");
+    expect(pos.rows[0].c).toBeGreaterThanOrEqual(1);
 
     await closePool();
   });

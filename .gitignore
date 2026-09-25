@@ -1,7 +1,35 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Environment & secrets
 .env
-*.log
-coverage/
-.DS_Store
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Logs & runtime
 logs/
+*.log
+*.pid
+
+# Test coverage
+coverage/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Research artifacts (raw captures from live mainnet, sweep outputs)
+*-capture.json
+sweep-results*.json
+mints.txt.bak
