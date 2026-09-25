@@ -11,6 +11,7 @@
  *   npm run smoke:birdeye                 # USDC
  *   npm run smoke:birdeye -- <mint>       # any mint
  */
+import '../src/infra/netDefaults';
 import 'dotenv/config';
 import { BirdeyeMarketProvider } from '../src/data/birdeye';
 

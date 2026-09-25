@@ -1,3 +1,4 @@
+import '../infra/netDefaults';
 import fs from 'fs';
 import path from 'path';
 import { buildProductionApp } from './productionBootstrap';

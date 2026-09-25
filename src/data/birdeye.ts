@@ -8,7 +8,11 @@ import { logger } from '../utils/logger';
  * Field names below are the documented ones as of writing; confirm against
  * the current Birdeye response before trusting them.
  *
- * Returns null if any required field is missing (Rule 30: never guess).
+ * Error semantics (Rule 30 / Rule 35):
+ *   - HTTP non-2xx or network failure → THROW. Callers must distinguish
+ *     "oracle is down / rate-limited" from "no data for this token".
+ *   - HTTP 200 with missing required fields → return null.
+ *     This is the legitimate "insufficient data" path.
  */
 export class BirdeyeMarketProvider implements MarketDataProvider {
   readonly name = 'birdeye';
@@ -20,61 +24,54 @@ export class BirdeyeMarketProvider implements MarketDataProvider {
   ) {}
 
   async fetchSnapshot(tokenMint: string): Promise<MarketSnapshot | null> {
-    try {
-      const url = `${this.baseUrl}/defi/token_overview?address=${encodeURIComponent(tokenMint)}`;
-      const res = await this.fetchImpl(url, {
-        headers: { 'X-API-KEY': this.apiKey, accept: 'application/json', 'x-chain': 'solana' },
-      });
-      if (!res.ok) {
-        const body = typeof res.text === 'function' ? await res.text().catch(() => '') : '';
-        throw new Error(`Birdeye HTTP ${res.status}: ${body.slice(0, 200)}`);
-      }
-      const json = (await res.json()) as { data?: Record<string, unknown> };
-      const d = json.data;
-      if (!d) return null;
+    const url = `${this.baseUrl}/defi/token_overview?address=${encodeURIComponent(tokenMint)}`;
+    const res = await this.fetchImpl(url, {
+      headers: { 'X-API-KEY': this.apiKey, accept: 'application/json', 'x-chain': 'solana' },
+    });
+    if (!res.ok) {
+      const body = typeof res.text === 'function' ? await res.text().catch(() => '') : '';
+      throw new Error(`Birdeye HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
 
-      const priceUsd = numOrNull(d.price);
-      const liquidityUsd = numOrNull(d.liquidity);
-      const volume24hUsd = numOrNull(d.v24hUSD);
-      const holderCount = intOrNull(d.holder);
-      const priceChange5mPercent = numOrNull(d.priceChange5mPercent);
-      const priceChange1hPercent = numOrNull(d.priceChange1hPercent);
+    const json = (await res.json()) as { data?: Record<string, unknown> };
+    const d = json.data;
+    if (!d) return null;
 
-      if (
-        priceUsd === null || priceUsd <= 0 ||
-        liquidityUsd === null ||
-        volume24hUsd === null ||
-        holderCount === null ||
-        priceChange5mPercent === null ||
-        priceChange1hPercent === null
-      ) {
-        logger.warn(
-          { event: 'BIRDEYE_DATA_INCOMPLETE', token: tokenMint },
-          'Birdeye returned incomplete data — refusing to build snapshot',
-        );
-        return null;
-      }
+    const priceUsd = numOrNull(d.price);
+    const liquidityUsd = numOrNull(d.liquidity);
+    const volume24hUsd = numOrNull(d.v24hUSD);
+    const holderCount = intOrNull(d.holder);
+    const priceChange5mPercent = numOrNull(d.priceChange5mPercent);
+    const priceChange1hPercent = numOrNull(d.priceChange1hPercent);
 
-      return {
-        tokenMint,
-        fetchedAt: Date.now(),
-        priceUsd,
-        liquidityUsd,
-        volume24hUsd,
-        holderCount,
-        // Rule 30: Birdeye does not expose holder concentration. Leave undefined.
-        // top10HolderPercent: undefined
-        // smartWalletNetFlowUsd: undefined
-        priceChange5mPercent,
-        priceChange1hPercent,
-      };
-    } catch (err) {
-      logger.error(
-        { event: 'BIRDEYE_DATA_ERROR', token: tokenMint, err },
-        'Birdeye fetch failed',
+    if (
+      priceUsd === null || priceUsd <= 0 ||
+      liquidityUsd === null ||
+      volume24hUsd === null ||
+      holderCount === null ||
+      priceChange5mPercent === null ||
+      priceChange1hPercent === null
+    ) {
+      logger.warn(
+        { event: 'BIRDEYE_DATA_INCOMPLETE', token: tokenMint },
+        'Birdeye returned incomplete data — refusing to build snapshot',
       );
       return null;
     }
+
+    return {
+      tokenMint,
+      fetchedAt: Date.now(),
+      priceUsd,
+      liquidityUsd,
+      volume24hUsd,
+      holderCount,
+      // Rule 30: Birdeye does not expose holder concentration. Leave undefined.
+      // top10HolderPercent: undefined
+      // smartWalletNetFlowUsd: undefined
+      priceChange5mPercent,
+      priceChange1hPercent,
+    };
   }
 }
 
