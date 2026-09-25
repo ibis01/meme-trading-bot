@@ -1,6 +1,6 @@
 import { Authorizer } from '../src/telegram/auth';
 import { InMemoryKillSwitch } from '../src/state/killSwitch';
-import { InMemoryPositionStore } from '../src/state/positions';
+import { InMemoryPositionLedger } from '../src/state/positions/inMemoryLedger';
 import { InMemoryProposalStore } from '../src/state/proposals';
 import { ConfirmationManager } from '../src/telegram/confirmation';
 import {
@@ -17,7 +17,7 @@ function mkCtx(userId: number | undefined, allowed: number[] = [111]): CommandCo
     userId,
     authorizer: new Authorizer(allowed),
     killSwitch: new InMemoryKillSwitch(),
-    positions: new InMemoryPositionStore(),
+    positions: new InMemoryPositionLedger(),
     proposals: new InMemoryProposalStore(),
     confirmations: new ConfirmationManager(60_000),
   };

@@ -1,4 +1,7 @@
 import { MarketSnapshot } from '../src/strategy/types';
+import * as os from 'os';
+import * as fs from 'fs';
+import * as path from 'path';
 
 jest.mock('../src/config', () => ({
   config: {
@@ -91,9 +94,6 @@ describe('buildFeed (P1-11)', () => {
     // Ensure mints.txt is not reachable in the test cwd.
     const { buildFeed } = await import('../src/app/runLoop');
     // Save current cwd and switch to a temp dir with no mints.txt
-    const os = require('os');
-    const fs = require('fs');
-    const path = require('path');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'noloop-'));
     const oldCwd = process.cwd();
     try {

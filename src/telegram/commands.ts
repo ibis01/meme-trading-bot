@@ -1,6 +1,6 @@
 import { Authorizer } from './auth';
 import { KillSwitchStore } from '../state/killSwitch';
-import { PositionStore } from '../state/positions';
+import { PositionLedger } from '../state/positions/types';
 import { ProposalStore } from '../state/proposals';
 import { ConfirmationManager } from './confirmation';
 import { audit } from './audit';
@@ -9,7 +9,7 @@ export interface CommandContext {
   userId: number | undefined;
   authorizer: Authorizer;
   killSwitch: KillSwitchStore;
-  positions: PositionStore;
+  positions: PositionLedger;
   proposals: ProposalStore;
   confirmations: ConfirmationManager;
   /** Optional: called when /buy or /sell is fully confirmed. Wired in Task 035. */

@@ -13,6 +13,8 @@ import { logger } from '../utils/logger';
 import { closeRedis } from '../infra/redis';
 import { closePool } from '../infra/db';
 import { config } from '../config';
+import { startTelegramBot } from '../telegram/bot';
+import { TelegramTradeHandler } from '../telegram/tradeHandlers';
 
 const DEMO_MINT = 'DEMO_TOKEN_MINT_11111111111111111111111111111';
 
@@ -120,8 +122,32 @@ async function main() {
 
   loop.start();
 
+  // P1-12: start the Telegram control plane if configured.
+  let telegramBot: ReturnType<typeof startTelegramBot> = null;
+  if (config.TELEGRAM_BOT_TOKEN) {
+    const tradeHandler = new TelegramTradeHandler({
+      orchestrator: app.orchestrator,
+      executor: app.executor,
+      positions: app.positions,
+    });
+    telegramBot = startTelegramBot({
+      positions: app.positions,
+      proposals: app.proposals,
+      onTradeRequest: async (req) => tradeHandler.handle({
+        userId: req.userId,
+        kind: req.kind,
+        tokenMint: req.tokenMint,
+        amountSol: req.amountSol,
+      }),
+      onCloseAll: async (userId) => tradeHandler.closeAll(userId),
+    });
+  } else {
+    logger.warn('TELEGRAM_BOT_TOKEN not set — Telegram disabled.');
+  }
+
   const shutdown = async (signal: string) => {
     logger.warn({ event: 'SHUTDOWN_RECEIVED', signal }, 'Shutting down…');
+    try { telegramBot?.stop('shutdown'); } catch { /* ignore */ }
     await loop.stop();
     try { await closeRedis(); } catch { /* ignore */ }
     try { await closePool(); } catch { /* ignore */ }
