@@ -98,7 +98,7 @@ export class MomentumStrategy implements Strategy {
         indicators: {
           priceChange5mPercent: market.priceChange5mPercent,
           priceChange1hPercent: market.priceChange1hPercent,
-          smartWalletNetFlowUsd: market.smartWalletNetFlowUsd ?? 0,
+          smartWalletNetFlowUsd: market.smartWalletNetFlowUsd ?? 0,  // indicators may normalize; score-side only
           score,
         },
         entryReason: reasons.join(' | '),

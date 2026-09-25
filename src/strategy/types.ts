@@ -9,9 +9,11 @@ export interface MarketSnapshot {
   priceUsd: number;
   liquidityUsd: number;
   volume24hUsd: number;
-  holderCount: number;
-  top10HolderPercent: number;
-  /** Optional. Undefined = unknown; 0 = known zero. */
+  /** Rule 30: undefined = unknown. Do not fabricate 0. */
+  holderCount?: number;
+  /** Rule 30: undefined = unknown. Do not fabricate 0. */
+  top10HolderPercent?: number;
+  /** Rule 30: undefined = unknown. Do not fabricate 0. */
   smartWalletNetFlowUsd?: number;
   priceChange5mPercent: number;
   priceChange1hPercent: number;

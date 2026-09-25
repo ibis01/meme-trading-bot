@@ -17,6 +17,8 @@ export interface ExecutionStore {
   getByRequestId(tradeRequestId: string): Promise<StoredExecution | null>;
   getBySignature(txSignature: string): Promise<StoredExecution | null>;
   updateStatus(id: string, status: ExecutionStatus, error?: string): Promise<void>;
+  /** P1-7: executions that need reconciliation. */
+  listUnresolved(limit: number): Promise<StoredExecution[]>;
 }
 
 export class InMemoryExecutionStore implements ExecutionStore {
@@ -46,6 +48,12 @@ export class InMemoryExecutionStore implements ExecutionStore {
     const e = this.byId.get(id);
     if (e) this.byId.set(id, { ...e, status, error });
   }
+
+  async listUnresolved(limit: number): Promise<StoredExecution[]> {
+    return [...this.byId.values()]
+      .filter((e) => e.status === 'SUBMITTED' || e.status === 'UNKNOWN')
+      .slice(0, limit);
+  }
 }
 
 export class PostgresExecutionStore implements ExecutionStore {
@@ -72,6 +80,14 @@ export class PostgresExecutionStore implements ExecutionStore {
 
   async updateStatus(id: string, status: ExecutionStatus, error?: string): Promise<void> {
     await this.pool.query('UPDATE executions SET status = $1, error = $2 WHERE id = $3', [status, error ?? null, id]);
+  }
+
+  async listUnresolved(limit: number): Promise<StoredExecution[]> {
+    const res = await this.pool.query(
+      "SELECT * FROM executions WHERE status IN ('SUBMITTED','UNKNOWN') ORDER BY executed_at ASC LIMIT $1",
+      [limit],
+    );
+    return res.rows.map((r) => this.row(r));
   }
 
   private row(r: any): StoredExecution {

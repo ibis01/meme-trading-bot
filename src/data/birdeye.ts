@@ -62,8 +62,8 @@ export class BirdeyeMarketProvider implements MarketDataProvider {
         liquidityUsd,
         volume24hUsd,
         holderCount,
-        top10HolderPercent: 0,   // filled by Composite via RugCheck/Helius
-        // Rule 30: leave undefined rather than fake it.
+        // Rule 30: Birdeye does not expose holder concentration. Leave undefined.
+        // top10HolderPercent: undefined
         // smartWalletNetFlowUsd: undefined
         priceChange5mPercent,
         priceChange1hPercent,
