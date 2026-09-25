@@ -1,7 +1,14 @@
 import { Pool } from 'pg';
 import { TradeProposal, RiskDecision } from '../risk/types';
 
-export type ProposalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXECUTED' | 'FAILED';
+export type ProposalStatus =
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'SUBMITTED'
+  | 'EXECUTED'
+  | 'UNKNOWN'
+  | 'FAILED';
 
 export interface StoredProposal {
   id: string;

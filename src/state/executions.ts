@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 
-export type ExecutionStatus = 'SUBMITTED' | 'CONFIRMED' | 'FAILED';
+export type ExecutionStatus = 'SUBMITTED' | 'UNKNOWN' | 'CONFIRMED' | 'FAILED';
 
 export interface StoredExecution {
   id: string;

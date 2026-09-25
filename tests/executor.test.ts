@@ -113,13 +113,15 @@ describe('TradeExecutor (Rules 11, 14, 24, 25, 34)', () => {
     expect(r.kind === 'REJECTED' && r.reason).toBe('STALE_QUOTE');
   });
 
-  it('DUPLICATE on second execute with same tradeRequestId', async () => {
+  it('second execute with same tradeRequestId returns the persisted outcome', async () => {
     const { executor } = mkExecutor();
     const first = await executor.execute(safeProposal());
     const second = await executor.execute(safeProposal());
     expect(first.kind).toBe('CONFIRMED');
-    expect(second.kind).toBe('DUPLICATE');
-    expect(second.kind === 'DUPLICATE' && second.execution.id).toBe(
+    // P1-6: rather than a synthetic DUPLICATE wrapper, the executor replays
+    // the persisted outcome so the caller learns the true state.
+    expect(second.kind).toBe('CONFIRMED');
+    expect(second.kind === 'CONFIRMED' && second.execution.id).toBe(
       first.kind === 'CONFIRMED' ? first.execution.id : '',
     );
   });

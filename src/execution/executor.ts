@@ -5,9 +5,8 @@ import { PositionLedger } from '../state/positions/types';
 import { ProposalStore, StoredProposal } from '../state/proposals';
 import { ExecutionStore, StoredExecution } from '../state/executions';
 import { PnlStore } from '../state/dailyPnl';
-import { computeRealizedPnlSol } from './realizedPnl';
 import { IdempotencyService } from '../infra/idempotency';
-import { ExecutionProvider } from './types';
+import { ExecutionProvider, ExecutionStatus } from './types';
 import { logger } from '../utils/logger';
 
 export interface TradeExecutorDeps {
@@ -18,21 +17,21 @@ export interface TradeExecutorDeps {
   executions: ExecutionStore;
   idempotency: IdempotencyService;
   provider: ExecutionProvider;
-  /** Rule 7: confirmed fills must reconcile into daily P&L. */
   pnl: PnlStore;
 }
 
 export type ExecuteResult =
   | { kind: 'CONFIRMED'; execution: StoredExecution }
+  | { kind: 'SUBMITTED'; execution: StoredExecution }
+  | { kind: 'UNKNOWN'; execution: StoredExecution }
   | { kind: 'REJECTED'; reason: string }
   | { kind: 'DUPLICATE'; execution: StoredExecution }
   | { kind: 'FAILED'; reason: string };
 
 /**
- * Rule 11: QUOTE → VALIDATE → SIMULATE → CHECK SLIPPAGE → ... → SIGN → SUBMIT → CONFIRM → VERIFY.
- * Rule 12: signing is delegated to the provider; no keys touch this class.
- * Rule 14: kill switch is re-read immediately before submission.
- * Rule 25: exec:<tradeRequestId> idempotency prevents double submission.
+ * Rule 11: executor honors a four-state submission model.
+ * Rule 24: pre-submit failures release the idempotency lock (safe to retry).
+ *          post-submit failures NEVER release the lock (retry could double-submit).
  */
 export class TradeExecutor {
   constructor(private readonly deps: TradeExecutorDeps) {}
@@ -42,23 +41,34 @@ export class TradeExecutor {
   }
 
   async execute(proposal: StoredProposal): Promise<ExecuteResult> {
-    // --- Stage 1: VALIDATE ---
+    // Stage 1: VALIDATE (no side effects)
     if (proposal.status !== 'APPROVED') {
       return { kind: 'REJECTED', reason: `PROPOSAL_NOT_APPROVED:${proposal.status}` };
     }
 
-    // --- Stage 2: idempotency (Rule 25) ---
+    // Stage 2: idempotency acquire
     const firstTime = await this.deps.idempotency.acquire(this.execKey(proposal.tradeRequestId));
     if (!firstTime) {
       const existing = await this.deps.executions.getByRequestId(proposal.tradeRequestId);
-      if (existing) return { kind: 'DUPLICATE', execution: existing };
+      if (existing) {
+        // Re-route to the correct result kind based on the persisted status.
+        if (existing.status === 'CONFIRMED') return { kind: 'CONFIRMED', execution: existing };
+        if (existing.status === 'SUBMITTED') return { kind: 'SUBMITTED', execution: existing };
+        if (existing.status === 'UNKNOWN') return { kind: 'UNKNOWN', execution: existing };
+        return { kind: 'DUPLICATE', execution: existing };
+      }
       return { kind: 'FAILED', reason: 'DUPLICATE_IN_FLIGHT' };
     }
 
+    // Anything from here until `submitStarted = true` is pre-submit and safe
+    // to release the lock on rejection.
+    let submitStarted = false;
+
     try {
-      // --- Stage 3: kill switch recheck (Rule 11 + 14) ---
+      // Stage 3: kill switch recheck (Rule 14)
       const ks = await this.deps.killSwitch.get();
       if (ks.active) {
+        await this.deps.idempotency.release(this.execKey(proposal.tradeRequestId));
         logger.warn(
           { event: 'EXECUTION_BLOCKED', tradeRequestId: proposal.tradeRequestId, reason: 'KILL_SWITCH_ACTIVE' },
           'Execution blocked by kill switch',
@@ -66,9 +76,10 @@ export class TradeExecutor {
         return { kind: 'REJECTED', reason: 'KILL_SWITCH_ACTIVE' };
       }
 
-      // --- Stage 4: re-run risk engine (catches stale quotes) ---
+      // Stage 4: risk re-evaluation (catches stale quotes)
       const fresh = await this.deps.riskEngine.evaluate(proposal.proposal);
       if (!fresh.allowed) {
+        await this.deps.idempotency.release(this.execKey(proposal.tradeRequestId));
         logger.warn(
           { event: 'EXECUTION_BLOCKED', tradeRequestId: proposal.tradeRequestId, reason: fresh.reason },
           'Execution blocked by risk re-evaluation',
@@ -76,10 +87,15 @@ export class TradeExecutor {
         return { kind: 'REJECTED', reason: fresh.reason ?? 'RISK_REJECTED' };
       }
 
-      // --- Stage 5: provider safety gate (Rule 34) ---
+      // Stage 5: provider safety gate (Rule 34)
       this.deps.provider.assertEnabled();
 
-      // --- Stage 6: SUBMIT ---
+      // === POINT OF NO RETURN ===
+      // From this line onward we DO NOT release the idempotency lock, even on
+      // rejection, because a submission attempt may have reached the network.
+      submitStarted = true;
+
+      // Stage 6: SUBMIT
       const outcome = await this.deps.provider.execute({
         tradeRequestId: proposal.tradeRequestId,
         tokenMint: proposal.proposal.tokenMint,
@@ -90,80 +106,35 @@ export class TradeExecutor {
         quoteFetchedAt: proposal.proposal.quoteFetchedAt,
       });
 
-      // --- Stage 7: CONFIRM + VERIFY ---
+      // Stage 7: persist
       const stored: StoredExecution = {
         id: randomUUID(),
         proposalId: proposal.id,
         tradeRequestId: proposal.tradeRequestId,
-        txSignature: outcome.txSignature,
+        txSignature: outcome.txSignature || null,
         status: outcome.status,
         error: outcome.error,
         executedAt: Date.now(),
       };
 
-      // Rule 24: refuse to persist a duplicate tx signature.
-      const clash = await this.deps.executions.getBySignature(outcome.txSignature);
-      if (clash) {
-        logger.error(
-          { event: 'DUPLICATE_SIGNATURE', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature },
-          'Duplicate tx signature detected — refusing to persist',
-        );
-        return { kind: 'FAILED', reason: 'DUPLICATE_TX_SIGNATURE' };
+      // Duplicate signature guard (Rule 24)
+      if (outcome.txSignature) {
+        const clash = await this.deps.executions.getBySignature(outcome.txSignature);
+        if (clash) {
+          logger.error(
+            { event: 'DUPLICATE_SIGNATURE', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature },
+            'Duplicate tx signature — refusing to persist',
+          );
+          // Keep the lock: this submission reached the network and produced a signature.
+          return { kind: 'FAILED', reason: 'DUPLICATE_TX_SIGNATURE' };
+        }
       }
 
       await this.deps.executions.save(stored);
 
       if (outcome.status === 'CONFIRMED') {
         await this.deps.proposals.updateStatus(proposal.id, 'EXECUTED');
-
-        // Rule 15 / Rule 7: update the ledger and reconcile realized P&L.
-        // Rule 23: a bookkeeping failure must not invalidate a real fill —
-        // log it loudly and continue. The daily loss gate will be stale until
-        // a reconciliation pass corrects it.
-        try {
-          if (proposal.proposal.side === 'BUY') {
-            // P0-4b interim model: quantity == SOL notional, priceSol == 1.
-            // When live execution lands, the provider will report units and
-            // price-per-unit separately and the ledger will track them natively.
-            await this.deps.positions.open({
-              tokenMint: proposal.proposal.tokenMint,
-              tradeRequestId: proposal.tradeRequestId,
-              quantity: outcome.filledAmountSol,
-              priceSol: 1,
-              signature: outcome.txSignature,
-            });
-          } else {
-            const held = await this.deps.positions.get(proposal.proposal.tokenMint);
-            if (held && held.quantity > 0) {
-              const closeResult = await this.deps.positions.close({
-                tokenMint: proposal.proposal.tokenMint,
-                tradeRequestId: proposal.tradeRequestId,
-                quantity: held.quantity,
-                priceSol: 1,
-                signature: outcome.txSignature,
-              });
-              await this.deps.pnl.addSol(closeResult.realizedPnlSol);
-              logger.info(
-                {
-                  event: 'PNL_RECORDED',
-                  tradeRequestId: proposal.tradeRequestId,
-                  realizedSol: closeResult.realizedPnlSol,
-                },
-                'Realized PnL recorded',
-              );
-            } else {
-              logger.warn(
-                { event: 'SELL_WITHOUT_POSITION', tradeRequestId: proposal.tradeRequestId },
-                'Sell filled but no position was on record — PnL not reconciled',
-              );
-            }
-          }
-        } catch (err) {
-          logger.error(
-            { event: 'LEDGER_RECONCILE_FAILED', tradeRequestId: proposal.tradeRequestId, err },
-            'Failed to reconcile position/PnL — gate will be stale until corrected',
-          );
-        }
+        await this.bookConfirmedFill(proposal, outcome);
         logger.info(
           { event: 'EXECUTION_CONFIRMED', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature, provider: this.deps.provider.name },
           'Execution confirmed',
@@ -171,17 +142,109 @@ export class TradeExecutor {
         return { kind: 'CONFIRMED', execution: stored };
       }
 
+      if (outcome.status === 'SUBMITTED') {
+        await this.deps.proposals.updateStatus(proposal.id, 'SUBMITTED');
+        logger.info(
+          { event: 'EXECUTION_SUBMITTED', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature },
+          'Execution submitted — awaiting confirmation (reconcile later)',
+        );
+        return { kind: 'SUBMITTED', execution: stored };
+      }
+
+      if (outcome.status === 'UNKNOWN') {
+        await this.deps.proposals.updateStatus(proposal.id, 'UNKNOWN');
+        logger.error(
+          { event: 'EXECUTION_UNKNOWN', tradeRequestId: proposal.tradeRequestId, error: outcome.error },
+          'Execution state UNKNOWN — lock retained, manual reconciliation required',
+        );
+        return { kind: 'UNKNOWN', execution: stored };
+      }
+
+      // FAILED: provider is confident the tx did not land.
       await this.deps.proposals.updateStatus(proposal.id, 'FAILED');
       logger.error(
         { event: 'EXECUTION_FAILED', tradeRequestId: proposal.tradeRequestId, error: outcome.error },
         'Execution failed at provider',
       );
+      // Keep the lock — a tx with this signature could still exist.
       return { kind: 'FAILED', reason: outcome.error ?? 'PROVIDER_FAILED' };
     } catch (err) {
-      await this.deps.idempotency.release(this.execKey(proposal.tradeRequestId));
       const reason = err instanceof Error ? err.message : 'UNKNOWN';
-      logger.error({ event: 'EXECUTION_ERROR', tradeRequestId: proposal.tradeRequestId, err }, 'Executor threw');
-      return { kind: 'FAILED', reason };
+
+      if (!submitStarted) {
+        // Pre-submit exception: safe to release the lock.
+        await this.deps.idempotency.release(this.execKey(proposal.tradeRequestId));
+        logger.error({ event: 'EXECUTION_ERROR_PRE_SUBMIT', tradeRequestId: proposal.tradeRequestId, err }, 'Pre-submit error');
+        return { kind: 'FAILED', reason };
+      }
+
+      // Post-submit exception: NEVER release. Record as UNKNOWN for reconciliation.
+      logger.error(
+        { event: 'EXECUTION_ERROR_POST_SUBMIT', tradeRequestId: proposal.tradeRequestId, err },
+        'Post-submit error — recording as UNKNOWN',
+      );
+      const unknownStored: StoredExecution = {
+        id: randomUUID(),
+        proposalId: proposal.id,
+        tradeRequestId: proposal.tradeRequestId,
+        txSignature: null,
+        status: 'UNKNOWN',
+        error: reason,
+        executedAt: Date.now(),
+      };
+      try {
+        await this.deps.executions.save(unknownStored);
+        await this.deps.proposals.updateStatus(proposal.id, 'UNKNOWN');
+      } catch (saveErr) {
+        logger.error(
+          { event: 'UNKNOWN_PERSIST_FAILED', tradeRequestId: proposal.tradeRequestId, saveErr },
+          'Failed to persist UNKNOWN execution — this is severe, manual reconciliation needed',
+        );
+      }
+      return { kind: 'UNKNOWN', execution: unknownStored };
+    }
+  }
+
+  private async bookConfirmedFill(
+    proposal: StoredProposal,
+    outcome: { filledAmountSol: number; txSignature: string },
+  ): Promise<void> {
+    try {
+      if (proposal.proposal.side === 'BUY') {
+        await this.deps.positions.open({
+          tokenMint: proposal.proposal.tokenMint,
+          tradeRequestId: proposal.tradeRequestId,
+          quantity: outcome.filledAmountSol,
+          priceSol: 1,
+          signature: outcome.txSignature,
+        });
+      } else {
+        const held = await this.deps.positions.get(proposal.proposal.tokenMint);
+        if (held && held.quantity > 0) {
+          const closeResult = await this.deps.positions.close({
+            tokenMint: proposal.proposal.tokenMint,
+            tradeRequestId: proposal.tradeRequestId,
+            quantity: held.quantity,
+            priceSol: 1,
+            signature: outcome.txSignature,
+          });
+          await this.deps.pnl.addSol(closeResult.realizedPnlSol);
+          logger.info(
+            { event: 'PNL_RECORDED', tradeRequestId: proposal.tradeRequestId, realizedSol: closeResult.realizedPnlSol },
+            'Realized PnL recorded',
+          );
+        } else {
+          logger.warn(
+            { event: 'SELL_WITHOUT_POSITION', tradeRequestId: proposal.tradeRequestId },
+            'Sell filled but no position was on record',
+          );
+        }
+      }
+    } catch (err) {
+      logger.error(
+        { event: 'LEDGER_RECONCILE_FAILED', tradeRequestId: proposal.tradeRequestId, err },
+        'Failed to reconcile position/PnL — gate will be stale until corrected',
+      );
     }
   }
 }
