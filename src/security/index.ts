@@ -1,4 +1,4 @@
-import { SecurityProvider, TokenSecurityEvidence, unsafeEvidence } from './types';
+import { SecurityProvider, TokenSecurityEvidence } from './types';
 export * from './types';
 export * from './rugcheck';
 

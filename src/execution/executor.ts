@@ -6,7 +6,7 @@ import { ProposalStore, StoredProposal } from '../state/proposals';
 import { ExecutionStore, StoredExecution } from '../state/executions';
 import { PnlStore } from '../state/dailyPnl';
 import { IdempotencyService } from '../infra/idempotency';
-import { ExecutionProvider, ExecutionStatus } from './types';
+import { ExecutionProvider } from './types';
 import { logger } from '../utils/logger';
 
 export interface TradeExecutorDeps {

@@ -1,3 +1,4 @@
+import bs58 from 'bs58';
 import { DecoderRegistry, RaydiumDecoder } from '../src/data/poolEvents/decoders';
 import { parseTransaction } from '../src/data/poolEvents/parseTx';
 
@@ -25,10 +26,7 @@ describe('parseTransaction', () => {
     const accountKeys = [...accounts, RAYDIUM];
     const programIdIndex = accountKeys.length - 1;
 
-    // Data: [1] as base58 = '5' (since base58 of single byte 0x01 is '5')
-    const ixData = Buffer.from([1]).toString('base64'); // we won't use base64; use base58
-    // bs58 of [1] is "5"; we need the correct value.
-    const bs58 = require('bs58').default ?? require('bs58');
+    // Data: [1] encodes to base58 as '5'.
     const ixDataB58 = bs58.encode(Buffer.from([1]));
 
     const result = {

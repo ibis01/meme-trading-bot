@@ -1,7 +1,6 @@
 import { TradeExecutor } from '../src/execution/executor';
 import { PaperExecutionProvider, StaticPriceOracle } from '../src/execution/paper';
 import { RiskEngine } from '../src/risk/engine';
-import { MockSecurityProvider } from '../src/security';
 import { IdempotencyService, RedisLike } from '../src/infra/idempotency';
 import { InMemoryExecutionStore } from '../src/state/executions';
 import { InMemoryProposalStore, StoredProposal } from '../src/state/proposals';

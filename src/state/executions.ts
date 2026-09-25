@@ -56,6 +56,16 @@ export class InMemoryExecutionStore implements ExecutionStore {
   }
 }
 
+interface ExecutionRow {
+  id: string;
+  proposal_id: string;
+  trade_request_id: string;
+  tx_signature: string | null;
+  status: ExecutionStatus;
+  error: string | null;
+  executed_at: Date;
+}
+
 export class PostgresExecutionStore implements ExecutionStore {
   constructor(private readonly pool: Pool) {}
 
@@ -90,7 +100,7 @@ export class PostgresExecutionStore implements ExecutionStore {
     return res.rows.map((r) => this.row(r));
   }
 
-  private row(r: any): StoredExecution {
+  private row(r: ExecutionRow): StoredExecution {
     return {
       id: r.id,
       proposalId: r.proposal_id,

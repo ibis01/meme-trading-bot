@@ -46,8 +46,8 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.warn({ event: 'SHUTDOWN_RECEIVED', signal }, 'Shutting down…');
     await loop.stop();
-    try { await closeRedis(); } catch {}
-    try { await closePool(); } catch {}
+    try { await closeRedis(); } catch { /* ignore shutdown errors */ }
+    try { await closePool(); } catch { /* ignore shutdown errors */ }
     logger.info({ event: 'SHUTDOWN_COMPLETE' }, 'Shutdown complete');
     process.exit(0);
   };

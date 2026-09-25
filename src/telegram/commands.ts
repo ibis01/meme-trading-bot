@@ -2,7 +2,7 @@ import { Authorizer } from './auth';
 import { KillSwitchStore } from '../state/killSwitch';
 import { PositionStore } from '../state/positions';
 import { ProposalStore } from '../state/proposals';
-import { ConfirmationManager, PendingConfirmation } from './confirmation';
+import { ConfirmationManager } from './confirmation';
 import { audit } from './audit';
 
 export interface CommandContext {

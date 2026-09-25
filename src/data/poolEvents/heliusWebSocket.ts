@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { PoolEvent, PoolEventHandler, PoolEventSource } from './types';
+import { PoolEventHandler, PoolEventSource } from './types';
 import { ALL_PROGRAM_IDS } from './dexPrograms';
 import { DecoderRegistry } from './decoders';
 import { parseTransaction } from './parseTx';

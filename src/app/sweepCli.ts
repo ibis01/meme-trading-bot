@@ -53,7 +53,7 @@ function parseArgs() {
   return { intervalName, intervalMs, lookbackMs, strategyFilter, out, mints };
 }
 
-function momentumGrid(intervalMs: number): SweepConfig<MomentumParams>[] {
+function momentumGrid(_intervalMs: number): SweepConfig<MomentumParams>[] {
   const grid: SweepConfig<MomentumParams>[] = [];
   for (const min5m of [0.3, 0.5, 0.8, 1.2]) {
     for (const min1h of [0.5, 1.0, 1.5]) {
@@ -73,7 +73,7 @@ function momentumGrid(intervalMs: number): SweepConfig<MomentumParams>[] {
   return grid;
 }
 
-function meanRevGrid(intervalMs: number): SweepConfig<MeanRevParams>[] {
+function meanRevGrid(_intervalMs: number): SweepConfig<MeanRevParams>[] {
   const grid: SweepConfig<MeanRevParams>[] = [];
   for (const dip5m of [-0.2, -0.4, -0.6, -0.8]) {
     for (const dip1h of [-0.4, -0.8, -1.2]) {

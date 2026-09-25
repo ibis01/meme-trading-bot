@@ -4,7 +4,7 @@ import { DecoderRegistry } from './decoders';
 import { parseTransaction } from './parseTx';
 import { filterPoolInitLogs } from './logFilter';
 import { RpcQueue } from './rpcQueue';
-import { PoolEvent, PoolEventHandler, PoolEventSource } from './types';
+import { PoolEventHandler, PoolEventSource } from './types';
 import { SolanaRpcClient } from '../solanaRpc';
 import { logger } from '../../utils/logger';
 

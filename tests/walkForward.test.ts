@@ -1,5 +1,4 @@
 import { WalkForwardValidator, defaultWalkForwardConfig } from '../src/backtest/walkForward';
-import { MomentumStrategy, defaultMomentumConfig } from '../src/strategy/momentum';
 import { PriceBar } from '../src/backtest/types';
 import { Strategy } from '../src/strategy/types';
 

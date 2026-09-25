@@ -1,5 +1,5 @@
 import { SignalLoop } from '../src/app/signalLoop';
-import { MarketFeed } from '../src/data/feed';
+import { FixtureFeed, MarketFeed } from '../src/data/feed';
 import { RiskEngine } from '../src/risk/engine';
 import { ProposalOrchestrator } from '../src/orchestrator/orchestrator';
 import { TradeExecutor } from '../src/execution/executor';
@@ -85,7 +85,7 @@ function buildLoop(batch: MarketSnapshot[], oneShot = false) {
 
   const feed = oneShot
     ? new OneShotFeed(batch)
-    : new (require('../src/data/feed').FixtureFeed)(batch);
+    : new FixtureFeed(batch);
 
   const loop = new SignalLoop(
     {

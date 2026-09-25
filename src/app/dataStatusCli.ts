@@ -30,7 +30,6 @@ async function main() {
       ORDER BY COUNT(*) DESC`,
   );
 
-  const now = Date.now();
   const report = res.rows.map((r) => {
     const count = Number(r.count);
     const isDemo = r.token_mint === DEMO_MINT;

@@ -70,8 +70,8 @@ async function main() {
     logger.warn({ event: 'RECORDER_SHUTDOWN', signal }, 'Recorder shutting down');
     clearInterval(timer);
     if (inFlight) await inFlight;
-    try { await closeRedis(); } catch {}
-    try { await closePool(); } catch {}
+    try { await closeRedis(); } catch { /* ignore shutdown errors */ }
+    try { await closePool(); } catch { /* ignore shutdown errors */ }
     logger.info({ event: 'RECORDER_SHUTDOWN_COMPLETE' }, 'Recorder shutdown complete');
     process.exit(0);
   };
