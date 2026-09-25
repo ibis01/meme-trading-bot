@@ -40,7 +40,20 @@ export class SignalLoop {
     for (const market of snapshots) {
       if (this.stopping) break;
       const signal = this.deps.strategy.evaluate(market, this.deps.strategyContext);
-      if (!signal) continue;
+      if (!signal) {
+        // Debug-level so a busy loop doesn't flood info logs. Set LOG_LEVEL=debug
+        // when investigating why a strategy is silent.
+        logger.debug(
+          {
+            event: 'NO_SIGNAL',
+            token: market.tokenMint,
+            priceChange5mPercent: market.priceChange5mPercent,
+            priceChange1hPercent: market.priceChange1hPercent,
+          },
+          'Strategy produced no signal',
+        );
+        continue;
+      }
       result.signals += 1;
 
       const orch = await this.deps.orchestrator.process(signal);
