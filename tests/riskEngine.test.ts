@@ -1,7 +1,7 @@
 import { RiskEngine } from '../src/risk/engine';
 import { InMemoryKillSwitch } from '../src/state/killSwitch';
 import { InMemoryPnlStore } from '../src/state/dailyPnl';
-import { InMemoryPositionStore } from '../src/state/positions';
+import { InMemoryPositionStore } from '../src/state/positions/countStore';
 import { TradeProposal } from '../src/risk/types';
 
 jest.mock('../src/config', () => ({

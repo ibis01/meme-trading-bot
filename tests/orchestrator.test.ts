@@ -6,7 +6,7 @@ import { InMemoryProposalStore } from '../src/state/proposals';
 import { InMemorySignalStore } from '../src/state/signals';
 import { InMemoryKillSwitch } from '../src/state/killSwitch';
 import { InMemoryPnlStore } from '../src/state/dailyPnl';
-import { InMemoryPositionStore } from '../src/state/positions';
+import { InMemoryPositionStore } from '../src/state/positions/countStore';
 import { Signal } from '../src/strategy/types';
 
 jest.mock('../src/config', () => ({

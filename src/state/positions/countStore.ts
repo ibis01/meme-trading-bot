@@ -1,3 +1,8 @@
+/**
+ * Narrow interface for consumers that only need the open-position count
+ * (e.g. RiskEngine's MAX_OPEN_POSITIONS check). Kept separate from
+ * PositionLedger so those consumers don't depend on the full ledger API.
+ */
 export interface PositionStore {
   getOpenCount(): Promise<number>;
   increment(): Promise<number>;
