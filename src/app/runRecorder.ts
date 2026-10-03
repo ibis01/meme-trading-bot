@@ -3,8 +3,7 @@ import path from 'path';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { PollerRecorder } from './pollerRecorder';
-import { BirdeyeMarketProvider } from '../data/birdeye';
-import { MarketDataProvider } from '../data/types';
+import { resolveRecorderProvider } from './recorderProvider';
 import { PostgresBarStore } from '../state/bars';
 import { InMemoryBarStore } from '../state/bars';
 import { getPool, closePool } from '../infra/db';
@@ -28,29 +27,22 @@ function readMints(): string[] {
   return mints;
 }
 
-function buildProvider(): MarketDataProvider {
-  // Helius DAS currently returns 401 with our key tier.
-  // Birdeye provides everything the strategy needs for MarketSnapshot.
-  // Authorities are checked separately by the SecurityProvider (RugCheck).
-  if (!config.BIRDEYE_API_KEY) {
-    logger.fatal('BIRDEYE_API_KEY missing — cannot record.');
-    process.exit(1);
-  }
-  return new BirdeyeMarketProvider(config.BIRDEYE_API_KEY);
-}
-
 async function main() {
   const mints = readMints();
-  const provider = buildProvider();
+  const { provider, defaultDelayMs } = resolveRecorderProvider({
+    source: process.env.RECORDER_SOURCE,
+    birdeyeApiKey: config.BIRDEYE_API_KEY,
+  });
+  const interRequestDelayMs = Number(process.env.RECORDER_DELAY_MS ?? defaultDelayMs);
 
   const store = config.DATABASE_URL
     ? new PostgresBarStore(getPool())
     : new InMemoryBarStore();
 
-  const recorder = new PollerRecorder({ provider, store, mints });
+  const recorder = new PollerRecorder({ provider, store, mints, interRequestDelayMs });
 
   logger.info(
-    { mints: mints.length, intervalMs: INTERVAL_MS, provider: provider.name },
+    { mints: mints.length, intervalMs: INTERVAL_MS, interRequestDelayMs, provider: provider.name },
     'Recorder started',
   );
 

@@ -48,7 +48,7 @@ export class PostgresBarStore implements BarStore {
         );
         values.push(
           b.tokenMint, b.fetchedAt, b.priceUsd, b.liquidityUsd, b.volume24hUsd,
-          b.holderCount, b.top10HolderPercent, b.smartWalletNetFlowUsd ?? null,
+          b.holderCount ?? null, b.top10HolderPercent ?? null, b.smartWalletNetFlowUsd ?? null,
           b.priceChange5mPercent, b.priceChange1hPercent,
         );
       });
@@ -80,8 +80,8 @@ export class PostgresBarStore implements BarStore {
       nextPriceUsd: 0,
       liquidityUsd: Number(r.liquidity_usd),
       volume24hUsd: Number(r.volume_24h_usd),
-      holderCount: Number(r.holder_count),
-      top10HolderPercent: Number(r.top10_holder_percent),
+      holderCount: r.holder_count === null ? undefined : Number(r.holder_count),
+      top10HolderPercent: r.top10_holder_percent === null ? undefined : Number(r.top10_holder_percent),
       smartWalletNetFlowUsd: r.smart_wallet_net_flow_usd === null ? undefined : Number(r.smart_wallet_net_flow_usd),
       priceChange5mPercent: Number(r.price_change_5m_percent),
       priceChange1hPercent: Number(r.price_change_1h_percent),
