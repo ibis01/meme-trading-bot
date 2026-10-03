@@ -1,0 +1,20 @@
+# Unverified candidates — addresses typed from memory. Run `npm run mints:vet`;
+# anything wrong shows NO_PAIR and is dropped automatically.
+DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 # BONK
+EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm # WIF
+7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr # POPCAT
+ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Q3gRTWHzPJBY # MOODENG
+9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump # FARTCOIN
+6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN # TRUMP
+2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv # PENGU
+FUAfBo2jgks6gB4Z4LfZkqSZgzNucisEHqnNebaRxM1P # MELANIA
+MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5 # MEW
+2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump # PNUT
+CzLSujWBLFsSjncfkh59rUFqvafWcY5tzedWJSuypump # GOAT
+J3NKxxXZcnNiMjKw9hYb2K4LUxgwB6t1FtPtQVsv3KFr # SPX6900
+63LfDmNb3MQ8mw9MtZ2To9bEA2M71kZUUGq5tiJxcqj9 # GIGA
+5mbK36SZ7J19An8jFochhQS4of8g6BwUjbeCSxBSoWdp # MICHI
+ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82 # BOME
+HhJpBhRRn4g56VsyLuT8DL5Bv31HkXqsrahTTUCZeZg4 # MYRO
+WENWENvqqNya429ubCdR81ZmD69brwQaaBYY6p3LCpk # WEN
+7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU # SAMO

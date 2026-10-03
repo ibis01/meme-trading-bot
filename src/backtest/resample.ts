@@ -9,7 +9,7 @@ export const INTERVAL_NAMES: Record<string, number> = {
 
 /**
  * Rule 30: resamples only bars we already have. No network, no guessing.
- * Aggregates N consecutive sub-interval bars into one target-interval bar.
+ * Aggregates sub-interval bars into time buckets of the target interval.
  *
  * For each output bar:
  *   - fetchedAt          = last sub-bar's fetchedAt
@@ -33,16 +33,22 @@ export function resampleBars(
   }
   if (bars.length === 0) return [];
 
-  const groupSize = targetIntervalMs / sourceIntervalMs;
   const sorted = [...bars].sort((a, b) => a.fetchedAt - b.fetchedAt);
 
-  const resampled: PriceBar[] = [];
-  for (let i = 0; i < sorted.length; i += groupSize) {
-    const slice = sorted.slice(i, i + groupSize);
-    if (slice.length === 0) continue;
+  // Bucket by TIME (relative to the first bar), not by count. Recorded bars
+  // are 30s apart with possible gaps (sleep, outages); count-based grouping
+  // would silently mislabel the interval. Empty buckets are skipped, never
+  // filled (Rule 30).
+  const t0 = sorted[0].fetchedAt;
+  const buckets = new Map<number, PriceBar>();
+  for (const bar of sorted) {
+    buckets.set(Math.floor((bar.fetchedAt - t0) / targetIntervalMs), bar);
+  }
 
-    // Use the last sub-bar's snapshot — most recent observation.
-    const last = slice[slice.length - 1];
+  const resampled: PriceBar[] = [];
+  for (const idx of [...buckets.keys()].sort((x, y) => x - y)) {
+    // Last sub-bar in the bucket — most recent observation.
+    const last = buckets.get(idx) as PriceBar;
 
     resampled.push({
       tokenMint: last.tokenMint,

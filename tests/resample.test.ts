@@ -76,3 +76,25 @@ describe('resampleBars (Task 041)', () => {
     expect(out[0].smartWalletNetFlowUsd).toBeUndefined();
   });
 });
+
+describe('resampleBars time bucketing (30s recorded bars)', () => {
+  const start = 1_700_000_000_000;
+  const bar = (tMs: number, price: number): PriceBar => ({
+    tokenMint: 'mint', fetchedAt: start + tMs, priceUsd: price, nextPriceUsd: 0,
+    liquidityUsd: 1, volume24hUsd: 1, priceChange5mPercent: 0, priceChange1hPercent: 0,
+  });
+
+  it('30s bars into 1m buckets: last bar per minute', () => {
+    const bars = [0, 30_000, 60_000, 90_000, 120_000, 150_000].map((t, i) => bar(t, 1 + i));
+    const out = resampleBars(bars, 60_000, 30_000);
+    expect(out.map((b) => b.priceUsd)).toEqual([2, 4, 6]);
+  });
+
+  it('a real-time gap yields no fabricated bars', () => {
+    // bars at 0s, 30s, then a 10-minute gap, then 630s, 660s
+    const bars = [bar(0, 1), bar(30_000, 2), bar(630_000, 3), bar(660_000, 4)];
+    const out = resampleBars(bars, 300_000, 30_000);
+    expect(out).toHaveLength(2); // buckets 0 and 2; bucket 1 stays empty
+    expect(out.map((b) => b.priceUsd)).toEqual([2, 4]);
+  });
+});

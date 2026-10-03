@@ -12,6 +12,8 @@ import { MeanReversionStrategy } from '../strategy/meanReversion';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
+const RECORDED_INTERVAL_MS = 30_000; // runRecorder.ts cadence
+
 interface MomentumParams {
   min5mChangePercent: number;
   min1hChangePercent: number;
@@ -107,7 +109,8 @@ async function loadBars(
       logger.warn({ mint, bars: raw.length }, 'Skipping mint — insufficient bars');
       continue;
     }
-    const resampled = intervalMs === 60_000 ? raw : resampleBars(raw, intervalMs, 60_000);
+    // Recorder stores 30s bars; always bucket by time so labels are true.
+    const resampled = resampleBars(raw, intervalMs, RECORDED_INTERVAL_MS);
     const linked = linkNextPrices(resampled);
     map.set(mint, linked);
     logger.info({ mint: mint.slice(0, 8) + '…', bars: linked.length }, 'Loaded bars');
