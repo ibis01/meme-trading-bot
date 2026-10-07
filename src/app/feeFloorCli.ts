@@ -28,8 +28,9 @@ async function main() {
   const { mint, fromMs, toMs, holdBars, intervalMs, intervalName } = parseArgs();
   const store = new PostgresBarStore(getPool());
   const raw = await store.get(mint, fromMs, toMs);
-  const resampled = intervalMs === 60_000 ? raw : resampleBars(raw, intervalMs, 60_000);
-  const bars = linkNextPrices(resampled);
+  // Recorder stores 30s bars; always bucket by time so labels are true.
+  const resampled = resampleBars(raw, intervalMs, 30_000);
+  const bars = linkNextPrices(resampled, intervalMs * 3);
 
   const FEE = 0.002;
   const SLIP = 0.003;

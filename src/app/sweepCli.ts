@@ -111,7 +111,7 @@ async function loadBars(
     }
     // Recorder stores 30s bars; always bucket by time so labels are true.
     const resampled = resampleBars(raw, intervalMs, RECORDED_INTERVAL_MS);
-    const linked = linkNextPrices(resampled);
+    const linked = linkNextPrices(resampled, intervalMs * 3);
     map.set(mint, linked);
     logger.info({ mint: mint.slice(0, 8) + '…', bars: linked.length }, 'Loaded bars');
   }

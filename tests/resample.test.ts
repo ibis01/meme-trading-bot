@@ -1,4 +1,5 @@
 import { resampleBars } from '../src/backtest/resample';
+import { linkNextPrices } from '../src/state/bars';
 import { PriceBar } from '../src/backtest/types';
 
 function series(count: number, basePrice = 1, step = 0.001): PriceBar[] {
@@ -96,5 +97,51 @@ describe('resampleBars time bucketing (30s recorded bars)', () => {
     const out = resampleBars(bars, 300_000, 30_000);
     expect(out).toHaveLength(2); // buckets 0 and 2; bucket 1 stays empty
     expect(out.map((b) => b.priceUsd)).toEqual([2, 4]);
+  });
+});
+
+describe('gap safety (recording outages)', () => {
+  const start = 1_700_000_000_000;
+  const bar = (tMs: number, price: number): PriceBar => ({
+    tokenMint: 'mint', fetchedAt: start + tMs, priceUsd: price, nextPriceUsd: 0,
+    liquidityUsd: 1, volume24hUsd: 1, priceChange5mPercent: 0, priceChange1hPercent: 0,
+  });
+
+  it('1h change never reaches across a gap (no fake momentum)', () => {
+    // 30s bars for 2 min at price 100, then 8h gap, then price 200
+    const pre = [0, 30_000, 60_000, 90_000, 120_000].map((t) => bar(t, 100));
+    const post = [0, 30_000, 60_000].map((t) => bar(8 * 3_600_000 + t, 200));
+    const out = resampleBars([...pre, ...post], 60_000, 30_000);
+    const first = out.find((b) => b.fetchedAt >= start + 8 * 3_600_000) as PriceBar;
+    expect(first.priceChange1hPercent).toBe(0);
+    expect(first.priceChange5mPercent).toBe(0);
+  });
+
+  it('change over a contiguous window is still measured', () => {
+    // one bar per minute for 70 min, price rising 1 per minute from 100
+    const bars = Array.from({ length: 70 }, (_, i) => bar(i * 60_000, 100 + i));
+    const out = resampleBars(bars, 60_000, 30_000);
+    const last = out[out.length - 1];
+    expect(last.priceChange5mPercent).toBeCloseTo(((169 - 164) / 164) * 100, 5);
+    expect(last.priceChange1hPercent).toBeCloseTo(((169 - 109) / 109) * 100, 5);
+  });
+});
+
+describe('linkNextPrices gap handling', () => {
+  const b = (t: number, p: number): PriceBar => ({
+    tokenMint: 'm', fetchedAt: t, priceUsd: p, nextPriceUsd: 0,
+    liquidityUsd: 1, volume24hUsd: 1, priceChange5mPercent: 0, priceChange1hPercent: 0,
+  });
+
+  it('links normally without maxGapMs (unchanged behaviour)', () => {
+    const out = linkNextPrices([b(0, 1), b(1_000_000, 2)]);
+    expect(out[0].nextPriceUsd).toBe(2);
+  });
+
+  it('refuses to link across a gap larger than maxGapMs', () => {
+    const out = linkNextPrices([b(0, 1), b(60_000, 2), b(10_000_000, 3)], 180_000);
+    expect(out[0].nextPriceUsd).toBe(2);
+    expect(out[1].nextPriceUsd).toBe(0); // next bar is after a gap → unknown
+    expect(out[2].nextPriceUsd).toBe(0);
   });
 });

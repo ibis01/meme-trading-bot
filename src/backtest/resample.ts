@@ -68,21 +68,23 @@ export function resampleBars(
   }
 
   // Recompute price-change indicators from the resampled close path.
-  const prices = resampled.map((b) => b.priceUsd);
-  const lookback5m = Math.max(1, Math.round(5 * 60_000 / targetIntervalMs));
-  const lookback1h = Math.max(1, Math.round(60 * 60_000 / targetIntervalMs));
-
+  // Windows are measured in TIME, not bar count: after a recording gap the
+  // look-back must not reach across the gap, or a stale price from hours ago
+  // would be reported as a 1h move (fake momentum). Bars with no earlier bar
+  // inside the window get 0, same as the start of the series.
+  const slack = targetIntervalMs / 2;
   return resampled.map((b, i) => ({
     ...b,
-    priceChange5mPercent: pctChange(prices, i, lookback5m),
-    priceChange1hPercent: pctChange(prices, i, lookback1h),
+    priceChange5mPercent: pctChangeByTime(resampled, i, 5 * 60_000 + slack),
+    priceChange1hPercent: pctChangeByTime(resampled, i, 60 * 60_000 + slack),
   }));
 }
 
-function pctChange(prices: number[], i: number, lookback: number): number {
-  const from = Math.max(0, i - lookback);
-  if (i === from) return 0;
-  const base = prices[from];
+function pctChangeByTime(bars: PriceBar[], i: number, windowMs: number): number {
+  let from = i;
+  while (from > 0 && bars[i].fetchedAt - bars[from - 1].fetchedAt <= windowMs) from--;
+  if (from === i) return 0;
+  const base = bars[from].priceUsd;
   if (base === 0) return 0;
-  return ((prices[i] - base) / base) * 100;
+  return ((bars[i].priceUsd - base) / base) * 100;
 }

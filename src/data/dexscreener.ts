@@ -4,6 +4,8 @@ import { logger } from '../utils/logger';
 
 interface DexPair {
   chainId: string;
+  dexId?: string;
+  pairAddress?: string;
   baseToken?: { address?: string };
   quoteToken?: { address?: string };
   priceUsd?: string;
@@ -15,6 +17,9 @@ interface DexPair {
 interface DexResponse {
   pairs?: DexPair[];
 }
+
+const MIN_POOL_LIQUIDITY_USD = 1_000;
+const MAX_POOL_PRICE_RATIO = 10;
 
 /**
  * DexScreener market data provider.
@@ -64,6 +69,31 @@ export class DexScreenerMarketProvider implements MarketDataProvider {
           'No Solana pair lists this mint as baseToken — refusing to guess priceUsd from a quote-side pair',
         );
         return null;
+      }
+
+      // Rule 30: if pools with real liquidity disagree wildly on this mint's
+      // price, the data is contradictory — refuse rather than pick one.
+      const quoted = baseSide
+        .map((p) => ({ p, price: numOrNull(p.priceUsd), liq: numOrNull(p.liquidity?.usd) }))
+        .filter((x) => x.price !== null && x.price > 0 && x.liq !== null && x.liq >= MIN_POOL_LIQUIDITY_USD);
+      if (quoted.length > 1) {
+        const prices = quoted.map((x) => x.price as number);
+        if (Math.max(...prices) / Math.min(...prices) > MAX_POOL_PRICE_RATIO) {
+          logger.warn(
+            {
+              event: 'DEXSCREENER_PRICE_DISAGREEMENT',
+              token: tokenMint,
+              pools: quoted.map((x) => ({
+                dex: x.p.dexId,
+                pair: x.p.pairAddress,
+                priceUsd: x.price,
+                liquidityUsd: x.liq,
+              })),
+            },
+            'Pools disagree on price by >10x — refusing to build snapshot',
+          );
+          return null;
+        }
       }
 
       const best = baseSide.reduce((a, b) =>

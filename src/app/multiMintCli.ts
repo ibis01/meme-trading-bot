@@ -143,7 +143,7 @@ async function evaluateMint(
   const raw = await store.get(mint, Date.now() - LOOKBACK_MS * 2, Date.now() + 60_000);
   // Always bucket by time: stored bars are a mix of 30s recorded and 1m backfilled.
   const working = resampleBars(raw, intervalMs, RECORDED_INTERVAL_MS);
-  const linked = linkNextPrices(working);
+  const linked = linkNextPrices(working, intervalMs * 3);
   if (linked.length < 100) {
     logger.warn({ mint, bars: linked.length }, 'Skipping mint — insufficient bars');
     return null;

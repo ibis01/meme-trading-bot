@@ -4,6 +4,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 import { DexScreenerMarketProvider } from '../data/dexscreener';
 import { BirdeyeNewListingSource } from '../data/newPairs/birdeyeNewListing';
+import { GeckoTerminalNewPoolsSource } from '../data/newPairs/geckoTerminalNewPools';
 import { NewPairPoller } from '../data/newPairs/newPairPoller';
 import { HeliusWebSocketPoolSource } from '../data/poolEvents/heliusWebSocket';
 import { PollerRecorder } from './pollerRecorder';
@@ -13,10 +14,13 @@ import { getPool, closePool } from '../infra/db';
 import { closeRedis } from '../infra/redis';
 
 const WSOL = 'So11111111111111111111111111111111111111112';
-const SOURCE = process.env.LAUNCH_SOURCE ?? 'birdeye'; // birdeye | helius
+const SOURCE = process.env.LAUNCH_SOURCE ?? 'gecko'; // gecko | birdeye | helius
 const TRACK_HOURS = Number(process.env.LAUNCH_TRACK_HOURS ?? 6);
 const MAX_TRACKED = Number(process.env.LAUNCH_MAX_TRACKED ?? 40);
-const POLL_MS = Number(process.env.LAUNCH_POLL_MS ?? 120_000); // Birdeye quota is limited
+const POLL_MS = Number(process.env.LAUNCH_POLL_MS ?? (SOURCE === 'birdeye' ? 120_000 : 60_000));
+const GECKO_PAGES = Number(process.env.GECKO_PAGES ?? 2);
+// Skip dust pools so the 40 slots go to tokens that actually trade.
+const MIN_LIQUIDITY_USD = Number(process.env.LAUNCH_MIN_LIQUIDITY_USD ?? 5000);
 const INTERVAL_MS = Number(process.env.LAUNCH_INTERVAL_MS ?? 30_000);
 const DELAY_MS = Number(process.env.RECORDER_DELAY_MS ?? 400);
 const MINTS_FILE = path.resolve(process.cwd(), process.env.LAUNCH_MINTS_FILE ?? 'launch-mints.txt');
@@ -31,8 +35,10 @@ async function main() {
   const provider = new DexScreenerMarketProvider();
   const store = new PostgresBarStore(getPool());
 
-  const track = (mint: string, dex: string) => {
+  const track = (mint: string, dex: string, liquidityUsd?: number, gateOnLiquidity = true) => {
     if (!mint || mint === WSOL) return;
+    // Rule 30: unknown liquidity is not treated as enough liquidity.
+    if (gateOnLiquidity && MIN_LIQUIDITY_USD > 0 && (liquidityUsd === undefined || liquidityUsd < MIN_LIQUIDITY_USD)) return;
     const r = tracker.add(mint, Date.now());
     if (r === 'ADDED') {
       fs.appendFileSync(MINTS_FILE, `${mint}\n`);
@@ -43,24 +49,33 @@ async function main() {
   };
 
   let stopSource: () => Promise<void>;
-  if (SOURCE === 'birdeye') {
+  if (SOURCE === 'gecko') {
+    const poller = new NewPairPoller(new GeckoTerminalNewPoolsSource(GECKO_PAGES), {
+      intervalMs: POLL_MS,
+      maxAgeMs: 5 * 60_000, // catch launches in their first minutes
+    });
+    poller.onEvent((ev) => track(ev.tokenMint, ev.dex, ev.liquidityUsd));
+    poller.start();
+    stopSource = () => poller.stop();
+  } else if (SOURCE === 'birdeye') {
     if (!config.BIRDEYE_API_KEY) throw new Error('LAUNCH_SOURCE=birdeye requires BIRDEYE_API_KEY');
     const poller = new NewPairPoller(new BirdeyeNewListingSource(config.BIRDEYE_API_KEY), {
       intervalMs: POLL_MS,
       maxAgeMs: 15 * 60_000,
     });
-    poller.onEvent((ev) => track(ev.tokenMint, ev.dex));
+    poller.onEvent((ev) => track(ev.tokenMint, ev.dex, ev.liquidityUsd));
     poller.start();
     stopSource = () => poller.stop();
   } else if (SOURCE === 'helius') {
     const url = process.env.HELIUS_WS_URL;
     if (!url) throw new Error('LAUNCH_SOURCE=helius requires HELIUS_WS_URL');
     const src = new HeliusWebSocketPoolSource(url);
-    src.onEvent((ev) => track(ev.baseMint, ev.dex));
+    // Pool events carry no liquidity figure, so the liquidity gate cannot apply.
+    src.onEvent((ev) => track(ev.baseMint, ev.dex, undefined, false));
     await src.start();
     stopSource = () => src.stop();
   } else {
-    throw new Error(`Unknown LAUNCH_SOURCE: ${SOURCE}. Use "birdeye" or "helius".`);
+    throw new Error(`Unknown LAUNCH_SOURCE: ${SOURCE}. Use "gecko", "birdeye" or "helius".`);
   }
 
   logger.info(

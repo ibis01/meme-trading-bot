@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 import { PriceBar } from '../backtest/types';
+import { dropRevertingSpikes } from '../backtest/sanitize';
+import { logger } from '../utils/logger';
 
 export interface BarStore {
   save(bar: PriceBar): Promise<void>;
@@ -86,14 +88,25 @@ export class PostgresBarStore implements BarStore {
       priceChange5mPercent: Number(r.price_change_5m_percent),
       priceChange1hPercent: Number(r.price_change_1h_percent),
     }));
-    return linkNextPrices(bars);
+    // Remove aggregator glitches (price jumps >50x that revert within 30 min).
+    const { bars: clean, dropped } = dropRevertingSpikes(bars);
+    if (dropped > 0) {
+      logger.warn({ event: 'BAR_SPIKES_DROPPED', token: tokenMint, dropped }, 'Dropped glitch bars (reverting price spikes)');
+    }
+    return linkNextPrices(clean);
   }
 }
 
-/** Fill nextPriceUsd from the following bar. Last bar has no next price (skipped by backtester). */
-export function linkNextPrices(bars: PriceBar[]): PriceBar[] {
-  return bars.map((b, i) => ({
-    ...b,
-    nextPriceUsd: i < bars.length - 1 ? bars[i + 1].priceUsd : 0,
-  }));
+/**
+ * Fill nextPriceUsd from the following bar. Last bar has no next price
+ * (skipped by backtester). If maxGapMs is given, a bar whose successor is
+ * further away than that gets nextPriceUsd = 0 (unknown, skipped) instead of
+ * a price from after a recording gap.
+ */
+export function linkNextPrices(bars: PriceBar[], maxGapMs?: number): PriceBar[] {
+  return bars.map((b, i) => {
+    const next = i < bars.length - 1 ? bars[i + 1] : undefined;
+    const gapTooBig = next !== undefined && maxGapMs !== undefined && next.fetchedAt - b.fetchedAt > maxGapMs;
+    return { ...b, nextPriceUsd: next && !gapTooBig ? next.priceUsd : 0 };
+  });
 }
