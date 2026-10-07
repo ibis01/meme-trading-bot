@@ -63,19 +63,29 @@ async function main() {
     seed: Number(arg('seed') ?? DEFAULT_POOLED_OPTIONS.seed),
   };
 
+  // Tradability gates. Applied to entries (TradableOnly) and now to exits (backtester).
+  const minLiquidityUsd = Number(arg('min-liquidity') ?? 5000);
+  const maxEntrySlippage = Number(arg('max-entry-slippage') ?? 0.1);
+  const maxExitSlippage = Number(arg('max-exit-slippage') ?? maxEntrySlippage);
+
   const mints = readMints();
   const excludes = readExcludes();
   const store = new PostgresBarStore(getPool());
   const slippageModel = selectSlippageModel(slippageMode, defaultWalkForwardConfig.backtest.slippageRate);
-  const btConfig = { ...defaultWalkForwardConfig.backtest, stops: defaultStops, split: 'test' as const };
+  const btConfig = {
+    ...defaultWalkForwardConfig.backtest,
+    stops: defaultStops,
+    split: 'test' as const,
+    minExitLiquidityUsd: minLiquidityUsd,
+    maxExitSlippageRate: maxExitSlippage,
+  };
 
-  const minLiquidityUsd = Number(arg('min-liquidity') ?? 5000);
-  const maxEntrySlippage = Number(arg('max-entry-slippage') ?? 0.1);
   const tradable = { minLiquidityUsd, maxEntrySlippageRate: maxEntrySlippage, solPriceUsd: 200 };
 
   interface TradeRec {
     mint: string; entry: number; exit: number; ret: number;
     reason: string; holdBars: number; deferredBars: number;
+    entryLiq: number; exitLiq: number; entrySlip: number; exitSlip: number;
   }
   const returns: Record<string, Map<string, number[]>> = {};
   const recs: Record<string, TradeRec[]> = {};
@@ -107,20 +117,20 @@ async function main() {
       const result = new PositionAwareBacktester(strat, btConfig, slippageModel).run(bars);
       const rets: number[] = [];
       for (const t of result.trades) {
-        // Rule 30: EXIT_FORCED_STALE trades have no honest return; exclude from stats.
         if (t.exitReason === 'EXIT_FORCED_STALE') {
           forcedStale[s.name]++;
           continue;
         }
         const dBars = t.deferredBars ?? 0;
         if (dBars > 0) deferred[s.name]++;
-        const raw0 = t.returnPct;
-        const r = Math.max(-100, raw0);
-        if (raw0 < -100) clamped[s.name]++;
+        const r = Math.max(-100, t.returnPct);
+        if (t.returnPct < -100) clamped[s.name]++;
         rets.push(r);
         recs[s.name].push({
           mint, entry: t.entryPriceUsd, exit: t.exitPriceUsd,
           ret: r, reason: t.exitReason, holdBars: t.holdBars, deferredBars: dBars,
+          entryLiq: t.entryLiquidityUsd ?? 0, exitLiq: t.exitLiquidityUsd ?? 0,
+          entrySlip: t.entrySlipRate ?? 0, exitSlip: t.exitSlipRate ?? 0,
         });
       }
       returns[s.name].set(mint, rets);
@@ -130,8 +140,17 @@ async function main() {
   const round = (n: number) => Math.round(n * 10000) / 10000;
   const short = (m: string) => `${m.slice(0, 6)}…${m.slice(-4)}`;
   const fmt = (t: TradeRec) => ({
-    token: short(t.mint), entryUsd: t.entry, exitUsd: t.exit,
-    returnPct: round(t.ret), exit: t.reason, holdBars: t.holdBars, deferredBars: t.deferredBars,
+    token: short(t.mint),
+    entryUsd: t.entry,
+    exitUsd: t.exit,
+    returnPct: round(t.ret),
+    exit: t.reason,
+    holdBars: t.holdBars,
+    deferredBars: t.deferredBars,
+    entryLiqUsd: Math.round(t.entryLiq),
+    exitLiqUsd: Math.round(t.exitLiq),
+    entrySlipPct: round(t.entrySlip * 100),
+    exitSlipPct: round(t.exitSlip * 100),
   });
   const summary = STRATEGIES.map((s) => {
     const st = pooledStats(returns[s.name], opts);
@@ -162,13 +181,13 @@ async function main() {
   console.log(JSON.stringify({
     interval: intervalName,
     slippage: slippageMode,
-    tradability: { minLiquidityUsd, maxEntrySlippage },
+    tradability: { minLiquidityUsd, maxEntrySlippage, maxExitSlippage },
     tokensCandidate: mints.length,
     tokensExcluded: excluded,
     tokensUsed: used,
     tokensSkipped: skipped,
     minBars,
-    note: 'Fixed-parameter strategies, no fitting. Net returns per trade after fees and slippage, clamped at -100%. 95% CIs bootstrap over tokens. EXIT_FORCED_STALE trades (no known liquidity within maxExitDeferBars) are excluded from statistics. EDGE_CANDIDATE needs raw AND winsorized CIs above zero.',
+    note: 'Fixed-parameter strategies, no fitting. Net returns after fees and slippage, clamped at -100%. Exits deferred past thin/unknown-liquidity bars; EXIT_FORCED_STALE trades excluded from stats. CIs bootstrap over tokens. EDGE_CANDIDATE needs raw AND winsorized CIs above zero.',
     results: summary,
   }, null, 2));
   await closePool();
