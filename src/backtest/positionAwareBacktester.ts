@@ -11,18 +11,29 @@ import {
   PriceBar,
 } from './types';
 
+const DEFAULT_MAX_EXIT_DEFER_BARS = 6;
+
+/** Rule 30: liquidity is "known" only if it is a finite number > 0. */
+function hasKnownLiquidity(liquidityUsd: number | undefined): liquidityUsd is number {
+  return typeof liquidityUsd === 'number' && Number.isFinite(liquidityUsd) && liquidityUsd > 0;
+}
+
 /**
  * Rule 16: models real position lifecycle.
  *   - One position at a time (Rule 15 max-open-positions = 1 for backtest).
- *   - Entry on signal.
+ *   - Entry on signal, but only on a bar with known liquidity.
  *   - Exit only when exit rules fire, or at end of data.
- *   - Holds across bars.
+ *   - Rule 30: an exit that fires on a bar with unknown liquidity is deferred
+ *     to the next bar with known liquidity. If none appears within
+ *     maxExitDeferBars, the trade is priced at the last known-good bar and
+ *     tagged EXIT_FORCED_STALE so callers can exclude it.
  *
- * Deterministic. No I/O. Same bars + same strategy + same stops → same result.
+ * Deterministic. No I/O. Same bars + same strategy + same stops -> same result.
  */
 export class PositionAwareBacktester {
   private readonly exitRules: ExitRules;
   private readonly slippageModel: SlippageModel;
+  private readonly maxExitDeferBars: number;
 
   constructor(
     private readonly strategy: Strategy,
@@ -31,6 +42,9 @@ export class PositionAwareBacktester {
   ) {
     this.exitRules = new ExitRules(config.stops);
     this.slippageModel = slippageModel ?? new ConstantSlippageModel(config.slippageRate);
+    const m = config.maxExitDeferBars ?? DEFAULT_MAX_EXIT_DEFER_BARS;
+    if (!Number.isFinite(m) || m < 0) throw new Error('maxExitDeferBars must be >= 0');
+    this.maxExitDeferBars = m;
   }
 
   run(bars: PriceBar[]): PositionAwareBacktestResult {
@@ -38,37 +52,71 @@ export class PositionAwareBacktester {
     const equityCurveSol: number[] = [];
     let equity = this.config.initialEquitySol;
     equityCurveSol.push(equity);
-    let feesPaidSol = 0;
-    let slippagePaidSol = 0;
     let position: OpenPosition | null = null;
+    let pendingExit: { reason: ExitReason; triggeredAtIndex: number } | null = null;
+
+    // Last bar (index, price, liquidity) at which we could have transacted.
+    let lastGoodIndex = -1;
+    let lastGoodPriceUsd = 0;
+    let lastGoodLiquidityUsd = 0;
 
     for (let i = 0; i < bars.length; i++) {
       const bar = bars[i];
-      // We only need the current bar to be valid; the exit fill is at bar.priceUsd.
+
+      if (hasKnownLiquidity(bar.liquidityUsd) && bar.priceUsd > 0) {
+        lastGoodIndex = i;
+        lastGoodPriceUsd = bar.priceUsd;
+        lastGoodLiquidityUsd = bar.liquidityUsd;
+      }
+
       if (!bar.priceUsd || bar.priceUsd <= 0) {
         equityCurveSol.push(equity);
         continue;
       }
 
-      // --- Update HWM before any evaluation ---
+      // --- Holding: exit rules / deferred exit ---
       if (position) {
         position = this.exitRules.updateHighWatermark(position, bar.priceUsd);
-      }
 
-      // --- If holding: check exit rules ---
-      if (position) {
-        const decision = this.exitRules.evaluate(position, bar.priceUsd, bar.fetchedAt);
-        if (decision.shouldExit) {
-          equity = this.closePosition(position, bar, i, decision.reason!, trades, equity, feesPaidSol, slippagePaidSol, () => {
-            feesPaidSol += 0; // fees tracked inside closePosition via closure
-          });
-          // Recompute feesPaid/slippage from trades for truth
-          feesPaidSol = trades.reduce((s, t) => s + t.amountSol * this.config.feeRate, 0);
-          slippagePaidSol = trades.reduce((s, t) => s + t.amountSol * this.config.slippageRate, 0);
-          position = null;
+        if (!pendingExit) {
+          const decision = this.exitRules.evaluate(position, bar.priceUsd, bar.fetchedAt);
+          if (decision.shouldExit) {
+            pendingExit = { reason: decision.reason!, triggeredAtIndex: i };
+          }
+        }
+
+        if (pendingExit) {
+          const deferredBars = i - pendingExit.triggeredAtIndex;
+
+          if (hasKnownLiquidity(bar.liquidityUsd)) {
+            equity = this.closePosition(
+              position, bar.priceUsd, bar.liquidityUsd, i,
+              pendingExit.reason, deferredBars, trades, equity,
+            );
+            position = null;
+            pendingExit = null;
+            equityCurveSol.push(equity);
+            continue;
+          }
+
+          if (deferredBars >= this.maxExitDeferBars) {
+            // No known liquidity in the deferral window. Rule 30: never fabricate a fill.
+            const fillPrice = lastGoodPriceUsd > 0 ? lastGoodPriceUsd : position.entryPriceUsd;
+            const fillLiq = lastGoodLiquidityUsd > 0 ? lastGoodLiquidityUsd : Number.POSITIVE_INFINITY;
+            equity = this.closePosition(
+              position, fillPrice, fillLiq, i,
+              'EXIT_FORCED_STALE', deferredBars, trades, equity,
+            );
+            position = null;
+            pendingExit = null;
+            equityCurveSol.push(equity);
+            continue;
+          }
+
           equityCurveSol.push(equity);
           continue;
         }
+
         equityCurveSol.push(equity);
         continue;
       }
@@ -79,28 +127,11 @@ export class PositionAwareBacktester {
         riskPerTradeSol: this.config.riskPerTradeSol,
         maxPositionSol: this.config.maxPositionSol,
       });
-
-      if (!signal) {
-        equityCurveSol.push(equity);
-        continue;
-      }
+      if (!signal) { equityCurveSol.push(equity); continue; }
+      if (!hasKnownLiquidity(bar.liquidityUsd)) { equityCurveSol.push(equity); continue; }
 
       const notional = Math.min(signal.proposedAmountSol, equity);
-      if (notional <= 0 || bar.priceUsd <= 0) {
-        equityCurveSol.push(equity);
-        continue;
-      }
-
-      // Entry fee + slippage charged immediately.
-      const entryFee = notional * this.config.feeRate;
-      const entrySlipRate = this.slippageModel.compute({
-        amountSol: notional,
-        solPriceUsd: this.config.solPriceUsd ?? 200,
-        liquidityUsd: bar.liquidityUsd,
-      });
-      const entrySlip = notional * entrySlipRate;
-      feesPaidSol += entryFee;
-      slippagePaidSol += entrySlip;
+      if (notional <= 0 || bar.priceUsd <= 0) { equityCurveSol.push(equity); continue; }
 
       position = {
         tokenMint: bar.tokenMint,
@@ -109,37 +140,56 @@ export class PositionAwareBacktester {
         entryAt: bar.fetchedAt,
         amountSol: notional,
         highWatermarkUsd: bar.priceUsd,
+        entryLiquidityUsd: bar.liquidityUsd,
       };
       equityCurveSol.push(equity);
     }
 
-    // --- Close any remaining position at the last bar ---
-    if (position && bars.length > 0) {
-      const lastBar = bars[bars.length - 1];
-      const lastIndex = bars.length - 1;
-      equity = this.closePosition(position, lastBar, lastIndex, 'END_OF_DATA', trades, equity, feesPaidSol, slippagePaidSol, () => {});
-      feesPaidSol = trades.reduce((s, t) => s + t.amountSol * this.config.feeRate, 0);
-      slippagePaidSol = trades.reduce((s, t) => s + t.amountSol * this.config.slippageRate, 0);
+    // --- Close any remaining position ---
+    if (position) {
+      const lastIndex = Math.max(0, bars.length - 1);
+      const lastBar = bars[lastIndex];
+      const reason: ExitReason = pendingExit ? pendingExit.reason : 'END_OF_DATA';
+      const deferredBars = pendingExit ? lastIndex - pendingExit.triggeredAtIndex : 0;
+
+      let fillPrice: number;
+      let fillLiq: number;
+      let fillIndex: number;
+      if (hasKnownLiquidity(lastBar.liquidityUsd) && lastBar.priceUsd > 0) {
+        fillPrice = lastBar.priceUsd;
+        fillLiq = lastBar.liquidityUsd;
+        fillIndex = lastIndex;
+      } else if (lastGoodPriceUsd > 0) {
+        fillPrice = lastGoodPriceUsd;
+        fillLiq = lastGoodLiquidityUsd > 0 ? lastGoodLiquidityUsd : Number.POSITIVE_INFINITY;
+        fillIndex = lastGoodIndex;
+      } else {
+        fillPrice = position.entryPriceUsd;
+        fillLiq = position.entryLiquidityUsd ?? Number.POSITIVE_INFINITY;
+        fillIndex = position.entryIndex;
+      }
+      equity = this.closePosition(position, fillPrice, fillLiq, fillIndex, reason, deferredBars, trades, equity);
+      position = null;
+      pendingExit = null;
     }
 
-    // Ensure equity curve ends at final value.
     if (equityCurveSol[equityCurveSol.length - 1] !== equity) {
       equityCurveSol.push(equity);
     }
 
+    // Match previous metric-accounting formula (one-sided per trade).
+    const feesPaidSol = trades.reduce((s, t) => s + t.amountSol * this.config.feeRate, 0);
+    const slippagePaidSol = trades.reduce((s, t) => s + t.amountSol * this.config.slippageRate, 0);
+
     const metrics = computeMetrics(
-      trades,
-      equityCurveSol,
-      this.config.initialEquitySol,
-      feesPaidSol,
-      slippagePaidSol,
-      bars.length,
+      trades, equityCurveSol, this.config.initialEquitySol,
+      feesPaidSol, slippagePaidSol, bars.length,
     );
 
     const grossPnlBeforeCosts = trades.reduce(
       (s, t) =>
         s + t.pnlSol
-        + t.amountSol * this.config.feeRate * 2  // entry + exit
+        + t.amountSol * this.config.feeRate * 2
         + t.amountSol * this.config.slippageRate * 2,
       0,
     );
@@ -156,48 +206,53 @@ export class PositionAwareBacktester {
 
   private closePosition(
     position: OpenPosition,
-    bar: PriceBar,
-    barIndex: number,
+    exitPriceUsd: number,
+    exitLiquidityUsd: number,
+    exitBarIndex: number,
     reason: ExitReason,
+    deferredBars: number,
     trades: ClosedTrade[],
     equity: number,
-    _feesSoFar: number,
-    _slipSoFar: number,
-    _onClose: () => void,
   ): number {
-    // Rule 18: exit fill is the price on the bar where the stop triggered,
-    // NOT the next bar's price. Using nextPriceUsd here is future data.
-    const exit = bar.priceUsd;
     const entry = position.entryPriceUsd;
-    const grossReturn = (exit - entry) / entry;
+    const grossReturn = (exitPriceUsd - entry) / entry;
 
-    // Exit-side fees and slippage.
-    const exitFee = position.amountSol * this.config.feeRate;
-    const exitSlipRate = this.slippageModel.compute({
-      amountSol: position.amountSol,
-      solPriceUsd: this.config.solPriceUsd ?? 200,
-      liquidityUsd: bar.liquidityUsd,
-    });
-    const exitSlip = position.amountSol * exitSlipRate;
+    const solPriceUsd = this.config.solPriceUsd ?? 200;
 
-    // Total PnL = notional × grossReturn − entry(fee+slip) − exit(fee+slip).
-    // Use per-side rates on each side (approximated here as one aggregate).
-    const totalCosts = exitFee + exitSlip + position.amountSol * (this.config.feeRate + exitSlipRate);
+    // Entry-side costs use the entry bar's known liquidity.
+    const entryLiq = position.entryLiquidityUsd;
+    const entrySlipRate = hasKnownLiquidity(entryLiq)
+      ? this.slippageModel.compute({ amountSol: position.amountSol, solPriceUsd, liquidityUsd: entryLiq })
+      : 0;
+
+    // Exit-side costs. exitLiquidityUsd is always known-or-+Infinity.
+    // PoolAwareSlippageModel must never see <= 0 here.
+    const exitSlipRate = Number.isFinite(exitLiquidityUsd)
+      ? this.slippageModel.compute({ amountSol: position.amountSol, solPriceUsd, liquidityUsd: exitLiquidityUsd })
+      : 0;
+
+    const totalCosts =
+      position.amountSol * this.config.feeRate +
+      position.amountSol * entrySlipRate +
+      position.amountSol * this.config.feeRate +
+      position.amountSol * exitSlipRate;
+
     const netPnl = position.amountSol * grossReturn - totalCosts;
     const returnPct = position.amountSol > 0 ? (netPnl / position.amountSol) * 100 : 0;
 
     trades.push({
       entryIndex: position.entryIndex,
-      exitIndex: barIndex,
+      exitIndex: exitBarIndex,
       tokenMint: position.tokenMint,
       entryPriceUsd: entry,
-      exitPriceUsd: exit,
+      exitPriceUsd,
       amountSol: position.amountSol,
       pnlSol: netPnl,
       returnPct,
-      reason: reason,
+      reason,
       exitReason: reason,
-      holdBars: barIndex - position.entryIndex,
+      holdBars: exitBarIndex - position.entryIndex,
+      deferredBars,
     });
 
     return equity + netPnl;

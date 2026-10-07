@@ -35,6 +35,12 @@ function readMints(): string[] {
   return [...seen];
 }
 
+function readExcludes(): Set<string> {
+  const x = arg('exclude');
+  if (!x) return new Set();
+  return new Set(x.split(',').map((s) => s.trim()).filter(Boolean));
+}
+
 const STRATEGIES: Array<{ name: string; make: () => Strategy }> = [
   { name: 'ALWAYS_BUY', make: () => new AlwaysBuyStrategy() },
   { name: 'SEEDED_RANDOM', make: () => new SeededRandomStrategy(42) },
@@ -58,6 +64,7 @@ async function main() {
   };
 
   const mints = readMints();
+  const excludes = readExcludes();
   const store = new PostgresBarStore(getPool());
   const slippageModel = selectSlippageModel(slippageMode, defaultWalkForwardConfig.backtest.slippageRate);
   const btConfig = { ...defaultWalkForwardConfig.backtest, stops: defaultStops, split: 'test' as const };
@@ -66,15 +73,28 @@ async function main() {
   const maxEntrySlippage = Number(arg('max-entry-slippage') ?? 0.1);
   const tradable = { minLiquidityUsd, maxEntrySlippageRate: maxEntrySlippage, solPriceUsd: 200 };
 
-  interface TradeRec { mint: string; entry: number; exit: number; ret: number; reason: string; holdBars: number }
+  interface TradeRec {
+    mint: string; entry: number; exit: number; ret: number;
+    reason: string; holdBars: number; deferredBars: number;
+  }
   const returns: Record<string, Map<string, number[]>> = {};
   const recs: Record<string, TradeRec[]> = {};
   const clamped: Record<string, number> = {};
-  for (const s of STRATEGIES) { returns[s.name] = new Map(); recs[s.name] = []; clamped[s.name] = 0; }
+  const deferred: Record<string, number> = {};
+  const forcedStale: Record<string, number> = {};
+  for (const s of STRATEGIES) {
+    returns[s.name] = new Map();
+    recs[s.name] = [];
+    clamped[s.name] = 0;
+    deferred[s.name] = 0;
+    forcedStale[s.name] = 0;
+  }
   let used = 0;
   let skipped = 0;
+  let excluded = 0;
 
   for (const mint of mints) {
+    if (excludes.has(mint)) { excluded++; continue; }
     const raw = await store.get(mint, 0, Date.now() + 60_000);
     if (raw.length === 0) { skipped++; continue; }
     const firstSeen = raw[0].fetchedAt;
@@ -85,25 +105,33 @@ async function main() {
     for (const s of STRATEGIES) {
       const strat = new TradableOnly(s.make(), slippageModel, tradable);
       const result = new PositionAwareBacktester(strat, btConfig, slippageModel).run(bars);
-      // A long spot position cannot lose more than its notional: clamp at -100%.
-      const rets = result.trades.map((t) => {
-        if (t.returnPct < -100) clamped[s.name]++;
-        return Math.max(-100, t.returnPct);
-      });
-      returns[s.name].set(mint, rets);
+      const rets: number[] = [];
       for (const t of result.trades) {
+        // Rule 30: EXIT_FORCED_STALE trades have no honest return; exclude from stats.
+        if (t.exitReason === 'EXIT_FORCED_STALE') {
+          forcedStale[s.name]++;
+          continue;
+        }
+        const dBars = t.deferredBars ?? 0;
+        if (dBars > 0) deferred[s.name]++;
+        const raw0 = t.returnPct;
+        const r = Math.max(-100, raw0);
+        if (raw0 < -100) clamped[s.name]++;
+        rets.push(r);
         recs[s.name].push({
           mint, entry: t.entryPriceUsd, exit: t.exitPriceUsd,
-          ret: Math.max(-100, t.returnPct), reason: t.exitReason, holdBars: t.holdBars,
+          ret: r, reason: t.exitReason, holdBars: t.holdBars, deferredBars: dBars,
         });
       }
+      returns[s.name].set(mint, rets);
     }
   }
 
   const round = (n: number) => Math.round(n * 10000) / 10000;
   const short = (m: string) => `${m.slice(0, 6)}…${m.slice(-4)}`;
   const fmt = (t: TradeRec) => ({
-    token: short(t.mint), entryUsd: t.entry, exitUsd: t.exit, returnPct: round(t.ret), exit: t.reason, holdBars: t.holdBars,
+    token: short(t.mint), entryUsd: t.entry, exitUsd: t.exit,
+    returnPct: round(t.ret), exit: t.reason, holdBars: t.holdBars, deferredBars: t.deferredBars,
   });
   const summary = STRATEGIES.map((s) => {
     const st = pooledStats(returns[s.name], opts);
@@ -124,6 +152,8 @@ async function main() {
       percentiles: Object.fromEntries(Object.entries(st.percentiles).map(([k, v]) => [k, round(v)])),
       exitReasons,
       tradesClampedAtMinus100: clamped[s.name],
+      tradesDeferred: deferred[s.name],
+      tradesForcedStale: forcedStale[s.name],
       top3Best: sortedRecs.slice(0, 3).map(fmt),
       top3Worst: sortedRecs.slice(-3).reverse().map(fmt),
     };
@@ -134,10 +164,11 @@ async function main() {
     slippage: slippageMode,
     tradability: { minLiquidityUsd, maxEntrySlippage },
     tokensCandidate: mints.length,
+    tokensExcluded: excluded,
     tokensUsed: used,
     tokensSkipped: skipped,
     minBars,
-    note: 'Fixed-parameter strategies, no fitting. Net returns per trade after fees and slippage, clamped at -100%. 95% CIs bootstrap over tokens. EDGE_CANDIDATE needs raw AND winsorized CIs above zero.',
+    note: 'Fixed-parameter strategies, no fitting. Net returns per trade after fees and slippage, clamped at -100%. 95% CIs bootstrap over tokens. EXIT_FORCED_STALE trades (no known liquidity within maxExitDeferBars) are excluded from statistics. EDGE_CANDIDATE needs raw AND winsorized CIs above zero.',
     results: summary,
   }, null, 2));
   await closePool();
