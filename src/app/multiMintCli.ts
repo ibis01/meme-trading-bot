@@ -9,14 +9,15 @@ import { MomentumStrategy, defaultMomentumConfig } from '../strategy/momentum';
 import { MeanReversionStrategy, defaultMeanReversionConfig } from '../strategy/meanReversion';
 import { AlwaysBuyStrategy, HoldNothingStrategy, SeededRandomStrategy } from '../strategy/baselines';
 import { Strategy } from '../strategy/types';
-import { BacktestResult } from '../backtest/types';
+import { BacktestResult, StopConfig } from '../backtest/types';
+import { stopsForInterval } from '../backtest/stopPresets';
 import { getPool, closePool } from '../infra/db';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
 const LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
-const SOURCE_INTERVAL_MS = 60_000; // Birdeye backfill granularity
-const RECORDED_INTERVAL_MS = 30_000; // runRecorder.ts cadence
+const SOURCE_INTERVAL_MS = 60_000;
+const RECORDED_INTERVAL_MS = 30_000;
 
 interface MintResult {
   mint: string;
@@ -38,7 +39,6 @@ interface WindowSummary {
   winRate: number;
   maxDrawdownPct: number;
   profitableAfterCosts: boolean;
-  /** Distribution of exit reasons, only meaningful for position-aware backtests. */
   exitReasons?: Record<string, number>;
 }
 
@@ -103,6 +103,7 @@ function evaluate(
   strategy: Strategy,
   bars: ReturnType<typeof linkNextPrices>,
   slippageMode: string | undefined,
+  stops: StopConfig,
 ): MintResult['strategies'][number] {
   const slippageModel = selectSlippageModel(
     slippageMode,
@@ -110,7 +111,7 @@ function evaluate(
   );
   const validator = new WalkForwardValidator(strategy, {
     ...defaultWalkForwardConfig,
-    stops: defaultStops,
+    stops,
     slippageModel,
   });
   const verdict = validator.run(bars);
@@ -132,7 +133,6 @@ async function evaluateMint(
   intervalMs: number,
   store: PostgresBarStore,
 ): Promise<MintResult | null> {
-  // Backfill is skipped when Birdeye is out of quota; existing 1m bars are resampled below.
   if (backfill && config.BIRDEYE_API_KEY) {
     const provider = new BirdeyeHistoryProvider({ apiKey: config.BIRDEYE_API_KEY });
     const now = Date.now();
@@ -141,7 +141,6 @@ async function evaluateMint(
   }
 
   const raw = await store.get(mint, Date.now() - LOOKBACK_MS * 2, Date.now() + 60_000);
-  // Always bucket by time: stored bars are a mix of 30s recorded and 1m backfilled.
   const working = resampleBars(raw, intervalMs, RECORDED_INTERVAL_MS);
   const linked = linkNextPrices(working, intervalMs * 3);
   if (linked.length < 100) {
@@ -157,10 +156,12 @@ async function evaluateMint(
     new MeanReversionStrategy(defaultMeanReversionConfig),
   ];
 
+  const stops = stopsForInterval(intervalMs);
+
   return {
     mint,
     bars: linked.length,
-    strategies: candidates.map((s) => evaluate(s, linked, slippageMode)),
+    strategies: candidates.map((s) => evaluate(s, linked, slippageMode, stops)),
   };
 }
 
@@ -202,7 +203,6 @@ function aggregate(results: MintResult[]): Aggregate[] {
     }
     out.push(agg);
   }
-  // Sort: most mints passed first, then highest avg return.
   out.sort((a, b) => b.mintsPassed - a.mintsPassed || b.avgTestReturnPct - a.avgTestReturnPct);
   return out;
 }
@@ -219,7 +219,11 @@ async function main() {
   }
 
   const backfill = process.env.SKIP_BACKFILL !== '1';
-  logger.info({ mints: mints.length, backfill, slippageMode: slippageMode ?? 'constant', interval: intervalName }, 'Multi-mint evaluation starting');
+  const effectiveStops = stopsForInterval(intervalMs);
+  logger.info(
+    { mints: mints.length, backfill, slippageMode: slippageMode ?? 'constant', interval: intervalName, effectiveStops },
+    'Multi-mint evaluation starting',
+  );
 
   const store = new PostgresBarStore(getPool());
   const results: MintResult[] = [];
@@ -236,6 +240,7 @@ async function main() {
     mintsEvaluated: results.length,
     slippageModel: slippageMode ?? 'constant',
     interval: intervalName,
+    effectiveStops,
     aggregates: aggregate(results),
     perMint: results.map((r) => ({
       mint: r.mint,

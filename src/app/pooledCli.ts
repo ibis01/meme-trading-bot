@@ -6,6 +6,7 @@ import { selectSlippageModel } from '../backtest/slippageFactory';
 import { resampleBars, INTERVAL_NAMES } from '../backtest/resample';
 import { pooledStats, DEFAULT_POOLED_OPTIONS } from '../backtest/pooled';
 import { TradableOnly } from '../backtest/tradable';
+import { stopsForInterval } from '../backtest/stopPresets';
 import { PostgresBarStore, linkNextPrices } from '../state/bars';
 import { MomentumStrategy } from '../strategy/momentum';
 import { MeanReversionStrategy } from '../strategy/meanReversion';
@@ -74,7 +75,7 @@ async function main() {
   const slippageModel = selectSlippageModel(slippageMode, defaultWalkForwardConfig.backtest.slippageRate);
   const btConfig = {
     ...defaultWalkForwardConfig.backtest,
-    stops: defaultStops,
+    stops: stopsForInterval(intervalMs),
     split: 'test' as const,
     minExitLiquidityUsd: minLiquidityUsd,
     maxExitSlippageRate: maxExitSlippage,
