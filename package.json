@@ -18,6 +18,7 @@
     "backtest": "tsx src/app/backtestCli.ts",
     "recorder": "tsx src/app/runRecorder.ts",
     "launch:recorder": "tsx src/app/runLaunchRecorder.ts",
+    "evaluate:pooled": "tsx src/app/pooledCli.ts",
     "mints:vet": "tsx src/app/vetMintsCli.ts",
     "seed:demo-bars": "tsx src/scripts/seedDemoBars.ts",
     "walkforward": "tsx src/app/walkForwardCli.ts",
