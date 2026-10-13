@@ -32,7 +32,7 @@ export class PumpFunCreateDecoder implements InstructionDecoder {
     if (!ix.data.subarray(0, 8).equals(DISCRIMINATOR)) return null;
     if (ix.accounts.length < 27) return null;
 
-    const baseMint = ix.accounts[0];
+    const baseMint = ix.accounts[1];
     const poolAddress = ix.accounts[2];
     const creatorWallet = ix.accounts[7];
 
