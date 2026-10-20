@@ -20,7 +20,12 @@ export interface MarketSnapshot {
 }
 
 export interface SignalEvidence {
-  marketSnapshot: MarketSnapshot;
+  /**
+   * Snapshot the strategy evaluated against. Omitted for manual/exit signals
+   * where no market data was fetched — never fabricate a zeroed snapshot
+   * (Rule 30): fabricated evidence poisons downstream analytics.
+   */
+  marketSnapshot?: MarketSnapshot;
   indicators: Record<string, number>;
   entryReason: string;
 }
@@ -38,6 +43,11 @@ export interface Signal {
   proposedAmountSol: number;
   proposedSlippageBps: number;
   proposedPriceImpactBps: number;
+  /**
+   * SELL only: fraction of the position to close, in basis points
+   * (10000 = full close). Absent = full close.
+   */
+  sellPercentBps?: number;
   evidence: SignalEvidence;
 }
 

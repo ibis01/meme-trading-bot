@@ -1,5 +1,8 @@
 import { TradeExecutor } from '../src/execution/executor';
-import { PaperExecutionProvider, StaticPriceOracle } from '../src/execution/paper';
+import {
+  PaperExecutionProvider,
+  StaticPriceOracle,
+} from '../src/execution/paper';
 import { ExecutionProvider, ExecutionOutcome } from '../src/execution/types';
 import { RiskEngine } from '../src/risk/engine';
 import { IdempotencyService, RedisLike } from '../src/infra/idempotency';
@@ -12,10 +15,16 @@ import { InMemoryPositionLedger } from '../src/state/positions/inMemoryLedger';
 jest.mock('../src/config', () => ({
   config: {
     TRADING_MODE: 'paper',
-    MAX_POSITION_SIZE_SOL: 0.1, MAX_DAILY_LOSS_SOL: 0.5,
-    MAX_SLIPPAGE_BPS: 200, MAX_PRICE_IMPACT_BPS: 300, MAX_OPEN_POSITIONS: 5,
-    MIN_LIQUIDITY_USD: 50000, MAX_TOP10_HOLDER_PERCENT: 30, MAX_DEV_WALLET_PERCENT: 5,
-    MAX_QUOTE_AGE_MS: 5000, WALLET_PRIVATE_KEY: undefined,
+    MAX_POSITION_SIZE_SOL: 0.1,
+    MAX_DAILY_LOSS_SOL: 0.5,
+    MAX_SLIPPAGE_BPS: 200,
+    MAX_PRICE_IMPACT_BPS: 300,
+    MAX_OPEN_POSITIONS: 5,
+    MIN_LIQUIDITY_USD: 50000,
+    MAX_TOP10_HOLDER_PERCENT: 30,
+    MAX_DEV_WALLET_PERCENT: 5,
+    MAX_QUOTE_AGE_MS: 5000,
+    WALLET_PRIVATE_KEY: undefined,
   },
 }));
 
@@ -28,7 +37,9 @@ class MockRedis implements RedisLike {
     this.store.set(key, { v: value, exp: now + ttl });
     return 'OK' as const;
   }
-  async del(key: string) { return this.store.delete(key) ? 1 : 0; }
+  async del(key: string) {
+    return this.store.delete(key) ? 1 : 0;
+  }
 }
 
 /** Controllable provider for state-machine tests. */
@@ -89,14 +100,23 @@ function mkExecutor(provider: ExecutionProvider) {
   const executions = new InMemoryExecutionStore();
   const idempotency = new IdempotencyService(new MockRedis());
   const executor = new TradeExecutor({
-    riskEngine, killSwitch, positions, proposals, executions, idempotency, provider, pnl,
+    riskEngine,
+    killSwitch,
+    positions,
+    proposals,
+    executions,
+    idempotency,
+    provider,
+    pnl,
   });
   return { executor, proposals, executions, idempotency };
 }
 
 describe('TradeExecutor — state machine (P1-6)', () => {
   it('CONFIRMED outcome books a fill and marks proposal EXECUTED', async () => {
-    const provider = new PaperExecutionProvider(new StaticPriceOracle({ [MINT]: 0.01 }));
+    const provider = new PaperExecutionProvider(
+      new StaticPriceOracle({ [MINT]: 0.01 }),
+    );
     const { executor, proposals } = mkExecutor(provider);
     await proposals.save(proposal('c1'));
     const r = await executor.execute(proposal('c1'));
@@ -108,6 +128,7 @@ describe('TradeExecutor — state machine (P1-6)', () => {
     const provider = new ScriptedProvider(async () => ({
       txSignature: 'sig_sub',
       filledAmountSol: 0,
+      filledTokenAmount: 0,
       filledPriceUsd: 0,
       status: 'SUBMITTED' as const,
     }));
@@ -122,6 +143,7 @@ describe('TradeExecutor — state machine (P1-6)', () => {
     const provider = new ScriptedProvider(async () => ({
       txSignature: '',
       filledAmountSol: 0,
+      filledTokenAmount: 0,
       filledPriceUsd: 0,
       status: 'UNKNOWN' as const,
       error: 'RPC_TIMEOUT',
@@ -141,6 +163,7 @@ describe('TradeExecutor — state machine (P1-6)', () => {
     const provider = new ScriptedProvider(async () => ({
       txSignature: '',
       filledAmountSol: 0,
+      filledTokenAmount: 0,
       filledPriceUsd: 0,
       status: 'FAILED' as const,
       error: 'SIMULATION_REJECTED',
@@ -167,7 +190,9 @@ describe('TradeExecutor — state machine (P1-6)', () => {
   });
 
   it('PRE-submit rejection (kill switch) releases the lock', async () => {
-    const provider = new PaperExecutionProvider(new StaticPriceOracle({ [MINT]: 0.01 }));
+    const provider = new PaperExecutionProvider(
+      new StaticPriceOracle({ [MINT]: 0.01 }),
+    );
     const killSwitch = new InMemoryKillSwitch();
     await killSwitch.activate('test', '1');
     const pnl = new InMemoryPnlStore();
@@ -177,10 +202,14 @@ describe('TradeExecutor — state machine (P1-6)', () => {
     const proposals = new InMemoryProposalStore();
     await proposals.save(proposal('ks'));
     const executor = new TradeExecutor({
-      riskEngine, killSwitch, positions,
+      riskEngine,
+      killSwitch,
+      positions,
       proposals,
       executions: new InMemoryExecutionStore(),
-      idempotency, provider, pnl,
+      idempotency,
+      provider,
+      pnl,
     });
     const r = await executor.execute(proposal('ks'));
     expect(r.kind).toBe('REJECTED');
@@ -190,7 +219,9 @@ describe('TradeExecutor — state machine (P1-6)', () => {
   });
 
   it('idempotent duplicate returns the original outcome kind', async () => {
-    const provider = new PaperExecutionProvider(new StaticPriceOracle({ [MINT]: 0.01 }));
+    const provider = new PaperExecutionProvider(
+      new StaticPriceOracle({ [MINT]: 0.01 }),
+    );
     const { executor } = mkExecutor(provider);
     const first = await executor.execute(proposal('dup'));
     const second = await executor.execute(proposal('dup'));

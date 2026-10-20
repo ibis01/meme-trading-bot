@@ -36,10 +36,27 @@ describe('StrategyGate (Rule 17)', () => {
       strategyVersion: '1.0.0',
       flags: ['EDGE_CONFIRMED'],
       approved: true,
-      trainReturnPct: 0, validationReturnPct: 0, testReturnPct: 0,
+      trainReturnPct: 0,
+      validationReturnPct: 0,
+      testReturnPct: 0,
       createdAt: Date.now(),
     });
     const gate = new StrategyGate(store, true);
     expect(await gate.check('MEME_MOMENTUM_V1', '2.0.0')).not.toBeNull();
+  });
+});
+
+describe('StrategyGate — exit exemption (audit fix H1)', () => {
+  const store = () => new InMemoryStrategyVerdictStore();
+
+  it('always allows exit strategies even when unapproved and enabled', async () => {
+    const gate = new StrategyGate(store(), true, ['EXIT_MONITOR_V1']);
+    expect(await gate.check('EXIT_MONITOR_V1', '1.0.0')).toBeNull();
+  });
+
+  it('still blocks unapproved entry strategies alongside the exemption', async () => {
+    const gate = new StrategyGate(store(), true, ['EXIT_MONITOR_V1']);
+    expect(await gate.check('MEME_MOMENTUM_V1', '1.0.0')).not.toBeNull();
+    expect(await gate.check('EXIT_IMPERSONATOR', '9.9.9')).not.toBeNull();
   });
 });

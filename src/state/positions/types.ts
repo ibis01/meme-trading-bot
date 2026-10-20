@@ -6,9 +6,9 @@
 export interface Position {
   id: string;
   tokenMint: string;
-  /** Units currently held. */
+  /** Token units currently held (not SOL — audit fix C1). */
   quantity: number;
-  /** Weighted average cost in SOL per unit. */
+  /** Weighted average cost in SOL per TOKEN unit. */
   avgCostSol: number;
   openedAt: number;
   updatedAt: number;
@@ -21,10 +21,11 @@ export interface PositionFill {
   /** Rule 25: the trade request that caused this fill. */
   tradeRequestId: string;
   side: 'BUY' | 'SELL';
+  /** Token units bought (BUY) or sold (SELL). */
   quantity: number;
-  /** Price per unit in SOL at fill time. */
+  /** SOL per token unit at fill time. */
   priceSol: number;
-  /** quantity * priceSol. */
+  /** quantity * priceSol (SOL notional of the fill). */
   totalSol: number;
   signature: string;
   executedAt: number;

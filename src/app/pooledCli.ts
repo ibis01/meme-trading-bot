@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { PositionAwareBacktester } from '../backtest/positionAwareBacktester';
-import { defaultWalkForwardConfig, defaultStops } from '../backtest/walkForward';
+import { defaultWalkForwardConfig } from '../backtest/walkForward';
 import { selectSlippageModel } from '../backtest/slippageFactory';
 import { resampleBars, INTERVAL_NAMES } from '../backtest/resample';
 import { pooledStats, DEFAULT_POOLED_OPTIONS } from '../backtest/pooled';
@@ -25,7 +25,11 @@ function arg(name: string): string | undefined {
 
 function readMints(): string[] {
   const explicit = arg('mints');
-  if (explicit) return explicit.split(',').map((s) => s.trim()).filter(Boolean);
+  if (explicit)
+    return explicit
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   const file = path.resolve(process.cwd(), arg('file') ?? 'launch-mints.txt');
   if (!fs.existsSync(file)) throw new Error(`${file} not found`);
   const seen = new Set<string>();
@@ -39,7 +43,12 @@ function readMints(): string[] {
 function readExcludes(): Set<string> {
   const x = arg('exclude');
   if (!x) return new Set();
-  return new Set(x.split(',').map((s) => s.trim()).filter(Boolean));
+  return new Set(
+    x
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
 }
 
 const STRATEGIES: Array<{ name: string; make: () => Strategy }> = [
@@ -52,12 +61,16 @@ const STRATEGIES: Array<{ name: string; make: () => Strategy }> = [
 async function main() {
   const intervalName = arg('interval') ?? '1m';
   const intervalMs = INTERVAL_NAMES[intervalName];
-  if (!intervalMs) throw new Error(`Unsupported --interval: ${intervalName}. Use 1m, 5m, 15m, 1h`);
+  if (!intervalMs)
+    throw new Error(
+      `Unsupported --interval: ${intervalName}. Use 1m, 5m, 15m, 1h`,
+    );
   const minBars = Number(arg('min-bars') ?? 60);
   const slippageMode = arg('slippage') ?? 'pool-aware';
   const fromMs = arg('from') ? Date.parse(arg('from') as string) : -Infinity;
   const toMs = arg('to') ? Date.parse(arg('to') as string) : Infinity;
-  if (Number.isNaN(fromMs) || Number.isNaN(toMs)) throw new Error('--from/--to must be ISO dates');
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs))
+    throw new Error('--from/--to must be ISO dates');
   const opts = {
     ...DEFAULT_POOLED_OPTIONS,
     bootstrap: Number(arg('bootstrap') ?? DEFAULT_POOLED_OPTIONS.bootstrap),
@@ -72,7 +85,10 @@ async function main() {
   const mints = readMints();
   const excludes = readExcludes();
   const store = new PostgresBarStore(getPool());
-  const slippageModel = selectSlippageModel(slippageMode, defaultWalkForwardConfig.backtest.slippageRate);
+  const slippageModel = selectSlippageModel(
+    slippageMode,
+    defaultWalkForwardConfig.backtest.slippageRate,
+  );
   const btConfig = {
     ...defaultWalkForwardConfig.backtest,
     stops: stopsForInterval(intervalMs),
@@ -81,12 +97,24 @@ async function main() {
     maxExitSlippageRate: maxExitSlippage,
   };
 
-  const tradable = { minLiquidityUsd, maxEntrySlippageRate: maxEntrySlippage, solPriceUsd: 200 };
+  const tradable = {
+    minLiquidityUsd,
+    maxEntrySlippageRate: maxEntrySlippage,
+    solPriceUsd: 200,
+  };
 
   interface TradeRec {
-    mint: string; entry: number; exit: number; ret: number;
-    reason: string; holdBars: number; deferredBars: number;
-    entryLiq: number; exitLiq: number; entrySlip: number; exitSlip: number;
+    mint: string;
+    entry: number;
+    exit: number;
+    ret: number;
+    reason: string;
+    holdBars: number;
+    deferredBars: number;
+    entryLiq: number;
+    exitLiq: number;
+    entrySlip: number;
+    exitSlip: number;
   }
   const returns: Record<string, Map<string, number[]>> = {};
   const recs: Record<string, TradeRec[]> = {};
@@ -105,17 +133,36 @@ async function main() {
   let excluded = 0;
 
   for (const mint of mints) {
-    if (excludes.has(mint)) { excluded++; continue; }
+    if (excludes.has(mint)) {
+      excluded++;
+      continue;
+    }
     const raw = await store.get(mint, 0, Date.now() + 60_000);
-    if (raw.length === 0) { skipped++; continue; }
+    if (raw.length === 0) {
+      skipped++;
+      continue;
+    }
     const firstSeen = raw[0].fetchedAt;
-    if (firstSeen < fromMs || firstSeen >= toMs) { skipped++; continue; }
-    const bars = linkNextPrices(resampleBars(raw, intervalMs, RECORDED_INTERVAL_MS), intervalMs * 3);
-    if (bars.length < minBars) { skipped++; continue; }
+    if (firstSeen < fromMs || firstSeen >= toMs) {
+      skipped++;
+      continue;
+    }
+    const bars = linkNextPrices(
+      resampleBars(raw, intervalMs, RECORDED_INTERVAL_MS),
+      intervalMs * 3,
+    );
+    if (bars.length < minBars) {
+      skipped++;
+      continue;
+    }
     used++;
     for (const s of STRATEGIES) {
       const strat = new TradableOnly(s.make(), slippageModel, tradable);
-      const result = new PositionAwareBacktester(strat, btConfig, slippageModel).run(bars);
+      const result = new PositionAwareBacktester(
+        strat,
+        btConfig,
+        slippageModel,
+      ).run(bars);
       const rets: number[] = [];
       for (const t of result.trades) {
         if (t.exitReason === 'EXIT_FORCED_STALE') {
@@ -128,10 +175,17 @@ async function main() {
         if (t.returnPct < -100) clamped[s.name]++;
         rets.push(r);
         recs[s.name].push({
-          mint, entry: t.entryPriceUsd, exit: t.exitPriceUsd,
-          ret: r, reason: t.exitReason, holdBars: t.holdBars, deferredBars: dBars,
-          entryLiq: t.entryLiquidityUsd ?? 0, exitLiq: t.exitLiquidityUsd ?? 0,
-          entrySlip: t.entrySlipRate ?? 0, exitSlip: t.exitSlipRate ?? 0,
+          mint,
+          entry: t.entryPriceUsd,
+          exit: t.exitPriceUsd,
+          ret: r,
+          reason: t.exitReason,
+          holdBars: t.holdBars,
+          deferredBars: dBars,
+          entryLiq: t.entryLiquidityUsd ?? 0,
+          exitLiq: t.exitLiquidityUsd ?? 0,
+          entrySlip: t.entrySlipRate ?? 0,
+          exitSlip: t.exitSlipRate ?? 0,
         });
       }
       returns[s.name].set(mint, rets);
@@ -157,7 +211,8 @@ async function main() {
     const st = pooledStats(returns[s.name], opts);
     const sortedRecs = [...recs[s.name]].sort((a, c) => c.ret - a.ret);
     const exitReasons: Record<string, number> = {};
-    for (const t of recs[s.name]) exitReasons[t.reason] = (exitReasons[t.reason] ?? 0) + 1;
+    for (const t of recs[s.name])
+      exitReasons[t.reason] = (exitReasons[t.reason] ?? 0) + 1;
     return {
       strategy: s.name,
       flag: st.flag,
@@ -169,7 +224,9 @@ async function main() {
       winRate: round(st.winRate),
       ci95Pct: [round(st.ciLowPct), round(st.ciHighPct)],
       winsorCi95Pct: [round(st.winsorCiLowPct), round(st.winsorCiHighPct)],
-      percentiles: Object.fromEntries(Object.entries(st.percentiles).map(([k, v]) => [k, round(v)])),
+      percentiles: Object.fromEntries(
+        Object.entries(st.percentiles).map(([k, v]) => [k, round(v)]),
+      ),
       exitReasons,
       tradesClampedAtMinus100: clamped[s.name],
       tradesDeferred: deferred[s.name],
@@ -179,18 +236,24 @@ async function main() {
     };
   });
 
-  console.log(JSON.stringify({
-    interval: intervalName,
-    slippage: slippageMode,
-    tradability: { minLiquidityUsd, maxEntrySlippage, maxExitSlippage },
-    tokensCandidate: mints.length,
-    tokensExcluded: excluded,
-    tokensUsed: used,
-    tokensSkipped: skipped,
-    minBars,
-    note: 'Fixed-parameter strategies, no fitting. Net returns after fees and slippage, clamped at -100%. Exits deferred past thin/unknown-liquidity bars; EXIT_FORCED_STALE trades excluded from stats. CIs bootstrap over tokens. EDGE_CANDIDATE needs raw AND winsorized CIs above zero.',
-    results: summary,
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        interval: intervalName,
+        slippage: slippageMode,
+        tradability: { minLiquidityUsd, maxEntrySlippage, maxExitSlippage },
+        tokensCandidate: mints.length,
+        tokensExcluded: excluded,
+        tokensUsed: used,
+        tokensSkipped: skipped,
+        minBars,
+        note: 'Fixed-parameter strategies, no fitting. Net returns after fees and slippage, clamped at -100%. Exits deferred past thin/unknown-liquidity bars; EXIT_FORCED_STALE trades excluded from stats. CIs bootstrap over tokens. EDGE_CANDIDATE needs raw AND winsorized CIs above zero.',
+        results: summary,
+      },
+      null,
+      2,
+    ),
+  );
   await closePool();
 }
 

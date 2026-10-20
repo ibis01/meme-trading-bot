@@ -1,4 +1,7 @@
-import { MomentumStrategy, syntheticMomentumConfig } from '../src/strategy/momentum';
+import {
+  MomentumStrategy,
+  syntheticMomentumConfig,
+} from '../src/strategy/momentum';
 import { MarketSnapshot, StrategyContext } from '../src/strategy/types';
 
 const ctx: StrategyContext = {
@@ -32,15 +35,21 @@ describe('MomentumStrategy (Rule 28 — deterministic)', () => {
   });
 
   it('returns null when 5m change is too small', () => {
-    expect(strategy.evaluate(baseMarket({ priceChange5mPercent: 1 }), ctx)).toBeNull();
+    expect(
+      strategy.evaluate(baseMarket({ priceChange5mPercent: 1 }), ctx),
+    ).toBeNull();
   });
 
   it('returns null when 1h change is too small', () => {
-    expect(strategy.evaluate(baseMarket({ priceChange1hPercent: 1 }), ctx)).toBeNull();
+    expect(
+      strategy.evaluate(baseMarket({ priceChange1hPercent: 1 }), ctx),
+    ).toBeNull();
   });
 
   it('returns null when smart wallet flow is negative (required positive)', () => {
-    expect(strategy.evaluate(baseMarket({ smartWalletNetFlowUsd: -100 }), ctx)).toBeNull();
+    expect(
+      strategy.evaluate(baseMarket({ smartWalletNetFlowUsd: -100 }), ctx),
+    ).toBeNull();
   });
 
   it('caps position size at maxPositionSol', () => {
@@ -59,12 +68,16 @@ describe('MomentumStrategy (Rule 28 — deterministic)', () => {
   it('never returns a signal without entry evidence', () => {
     const s = strategy.evaluate(baseMarket(), ctx)!;
     expect(s.evidence.entryReason.length).toBeGreaterThan(0);
-    expect(s.evidence.marketSnapshot.tokenMint).toBe('mint');
+    expect(s.evidence.marketSnapshot?.tokenMint).toBe('mint');
   });
 
   it('score is bounded 0..100', () => {
     const s = strategy.evaluate(
-      baseMarket({ priceChange5mPercent: 100, priceChange1hPercent: 500, smartWalletNetFlowUsd: 1e9 }),
+      baseMarket({
+        priceChange5mPercent: 100,
+        priceChange1hPercent: 500,
+        smartWalletNetFlowUsd: 1e9,
+      }),
       ctx,
     )!;
     expect(s.score).toBeLessThanOrEqual(100);

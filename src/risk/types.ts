@@ -13,10 +13,13 @@ export interface RiskDecision {
 export interface TradeProposal {
   tokenMint: string;
   side: 'BUY' | 'SELL';
+  /** SOL notional for BUY. Informational for SELL (position is closed by token quantity). */
   amountSol: number;
   expectedSlippageBps: number;
   expectedPriceImpactBps: number;
   quoteFetchedAt: number;
+  /** SELL only: fraction of the position to close, in bps (10000 = full). */
+  sellPercentBps?: number;
   security: TokenSecurityEvidence;
 }
 

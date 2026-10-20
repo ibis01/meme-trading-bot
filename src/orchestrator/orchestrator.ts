@@ -38,7 +38,10 @@ export class ProposalOrchestrator {
 
     // Rule 17: gate check BEFORE any state mutation (except idempotency).
     if (this.deps.strategyGate) {
-      const reason = await this.deps.strategyGate.check(signal.strategy, signal.strategyVersion);
+      const reason = await this.deps.strategyGate.check(
+        signal.strategy,
+        signal.strategyVersion,
+      );
       if (reason) {
         logger.warn(
           { event: 'STRATEGY_GATE_BLOCKED', tradeRequestId, reason },
@@ -66,6 +69,7 @@ export class ProposalOrchestrator {
         amountSol: signal.proposedAmountSol,
         expectedSlippageBps: signal.proposedSlippageBps,
         expectedPriceImpactBps: signal.proposedPriceImpactBps,
+        sellPercentBps: signal.sellPercentBps,
         quoteFetchedAt: Date.now(),
         security,
       };
@@ -101,7 +105,10 @@ export class ProposalOrchestrator {
     } catch (err) {
       await this.deps.idempotency.release(tradeRequestId);
       logger.error({ err, tradeRequestId }, 'Orchestrator failed');
-      return { kind: 'ERROR', reason: err instanceof Error ? err.message : 'UNKNOWN' };
+      return {
+        kind: 'ERROR',
+        reason: err instanceof Error ? err.message : 'UNKNOWN',
+      };
     }
   }
 }

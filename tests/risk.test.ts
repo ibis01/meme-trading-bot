@@ -54,74 +54,179 @@ describe('evaluateRisk (Rules 6, 7, 8, 11, 14)', () => {
   });
 
   it('REJECTS on kill switch', () => {
-    expect(evaluateRisk(proposal(), snapshot({ killSwitchActive: true })).reason)
-      .toBe('KILL_SWITCH_ACTIVE');
+    expect(
+      evaluateRisk(proposal(), snapshot({ killSwitchActive: true })).reason,
+    ).toBe('KILL_SWITCH_ACTIVE');
   });
 
   it('REJECTS stale quote', () => {
     const now = Date.now();
-    expect(evaluateRisk(proposal({ quoteFetchedAt: now - 60_000 }), snapshot({ now })).reason)
-      .toBe('STALE_QUOTE');
+    expect(
+      evaluateRisk(
+        proposal({ quoteFetchedAt: now - 60_000 }),
+        snapshot({ now }),
+      ).reason,
+    ).toBe('STALE_QUOTE');
   });
 
   it('REJECTS active mint authority', () => {
-    expect(evaluateRisk(proposal({ security: { ...safeSecurity, mintAuthorityDisabled: false } }), snapshot()).reason)
-      .toBe('MINT_AUTHORITY_ACTIVE');
+    expect(
+      evaluateRisk(
+        proposal({
+          security: { ...safeSecurity, mintAuthorityDisabled: false },
+        }),
+        snapshot(),
+      ).reason,
+    ).toBe('MINT_AUTHORITY_ACTIVE');
   });
 
   it('REJECTS active freeze authority', () => {
-    expect(evaluateRisk(proposal({ security: { ...safeSecurity, freezeAuthorityDisabled: false } }), snapshot()).reason)
-      .toBe('FREEZE_AUTHORITY_ACTIVE');
+    expect(
+      evaluateRisk(
+        proposal({
+          security: { ...safeSecurity, freezeAuthorityDisabled: false },
+        }),
+        snapshot(),
+      ).reason,
+    ).toBe('FREEZE_AUTHORITY_ACTIVE');
   });
 
   it('REJECTS unconfirmed sellability', () => {
-    expect(evaluateRisk(proposal({ security: { ...safeSecurity, sellabilityConfirmed: false } }), snapshot()).reason)
-      .toBe('SELLABILITY_UNCONFIRMED');
+    expect(
+      evaluateRisk(
+        proposal({
+          security: { ...safeSecurity, sellabilityConfirmed: false },
+        }),
+        snapshot(),
+      ).reason,
+    ).toBe('SELLABILITY_UNCONFIRMED');
   });
 
   it('REJECTS insufficient liquidity', () => {
-    expect(evaluateRisk(proposal({ security: { ...safeSecurity, liquidityUsd: 1_000 } }), snapshot()).reason)
-      .toBe('INSUFFICIENT_LIQUIDITY');
+    expect(
+      evaluateRisk(
+        proposal({ security: { ...safeSecurity, liquidityUsd: 1_000 } }),
+        snapshot(),
+      ).reason,
+    ).toBe('INSUFFICIENT_LIQUIDITY');
   });
 
   it('REJECTS holder concentration', () => {
-    expect(evaluateRisk(proposal({ security: { ...safeSecurity, top10HolderPercent: 80 } }), snapshot()).reason)
-      .toBe('HOLDER_CONCENTRATION_TOO_HIGH');
+    expect(
+      evaluateRisk(
+        proposal({ security: { ...safeSecurity, top10HolderPercent: 80 } }),
+        snapshot(),
+      ).reason,
+    ).toBe('HOLDER_CONCENTRATION_TOO_HIGH');
   });
 
   it('REJECTS dev wallet concentration', () => {
-    expect(evaluateRisk(proposal({ security: { ...safeSecurity, devWalletPercent: 20 } }), snapshot()).reason)
-      .toBe('DEV_WALLET_TOO_HIGH');
+    expect(
+      evaluateRisk(
+        proposal({ security: { ...safeSecurity, devWalletPercent: 20 } }),
+        snapshot(),
+      ).reason,
+    ).toBe('DEV_WALLET_TOO_HIGH');
   });
 
   it('REJECTS daily loss exceeded', () => {
-    expect(evaluateRisk(proposal(), snapshot({ dailyPnLSol: -1 })).reason)
-      .toBe('MAX_DAILY_LOSS_EXCEEDED');
+    expect(evaluateRisk(proposal(), snapshot({ dailyPnLSol: -1 })).reason).toBe(
+      'MAX_DAILY_LOSS_EXCEEDED',
+    );
   });
 
   it('REJECTS max open positions', () => {
-    expect(evaluateRisk(proposal(), snapshot({ currentOpenPositions: 5 })).reason)
-      .toBe('MAX_OPEN_POSITIONS_EXCEEDED');
+    expect(
+      evaluateRisk(proposal(), snapshot({ currentOpenPositions: 5 })).reason,
+    ).toBe('MAX_OPEN_POSITIONS_EXCEEDED');
   });
 
   it('REJECTS position size exceeded', () => {
-    expect(evaluateRisk(proposal({ amountSol: 1 }), snapshot()).reason)
-      .toBe('MAX_POSITION_SIZE_EXCEEDED');
+    expect(evaluateRisk(proposal({ amountSol: 1 }), snapshot()).reason).toBe(
+      'MAX_POSITION_SIZE_EXCEEDED',
+    );
   });
 
   it('REJECTS slippage exceeded', () => {
-    expect(evaluateRisk(proposal({ expectedSlippageBps: 500 }), snapshot()).reason)
-      .toBe('MAX_SLIPPAGE_EXCEEDED');
+    expect(
+      evaluateRisk(proposal({ expectedSlippageBps: 500 }), snapshot()).reason,
+    ).toBe('MAX_SLIPPAGE_EXCEEDED');
   });
 
   it('REJECTS price impact exceeded', () => {
-    expect(evaluateRisk(proposal({ expectedPriceImpactBps: 500 }), snapshot()).reason)
-      .toBe('MAX_PRICE_IMPACT_EXCEEDED');
+    expect(
+      evaluateRisk(proposal({ expectedPriceImpactBps: 500 }), snapshot())
+        .reason,
+    ).toBe('MAX_PRICE_IMPACT_EXCEEDED');
   });
 
   it('does not let a caller lie about kill switch via proposal', () => {
     // Proposal no longer has isKillSwitchActive at all — compile-time proof
     const p = proposal() as TradeProposal & { isKillSwitchActive?: boolean };
     expect(p.isKillSwitchActive).toBeUndefined();
+  });
+});
+
+describe('evaluateRisk — side-aware gating (audit fix C2)', () => {
+  it('SELL passes even when every token-quality gate would reject a BUY', () => {
+    const toxicSecurity = {
+      ...safeSecurity,
+      mintAuthorityDisabled: false, // active mint authority
+      freezeAuthorityDisabled: false, // active freeze authority
+      sellabilityConfirmed: false, // rugcheck says rugged
+      liquidityUsd: 10, // liquidity evaporated
+      top10HolderPercent: 99,
+      devWalletPercent: 80,
+    };
+    const r = evaluateRisk(
+      proposal({ side: 'SELL', security: toxicSecurity }),
+      snapshot(),
+    );
+    expect(r.allowed).toBe(true);
+  });
+
+  it('daily-loss trip blocks BUY but allows SELL (FLATTEN mode)', () => {
+    const s = snapshot({ dailyPnLSol: -1 });
+    expect(evaluateRisk(proposal({ side: 'BUY' }), s).reason).toBe(
+      'MAX_DAILY_LOSS_EXCEEDED',
+    );
+    expect(evaluateRisk(proposal({ side: 'SELL' }), s).allowed).toBe(true);
+  });
+
+  it('kill switch blocks BUY but never traps a position — SELL allowed', () => {
+    const s = snapshot({ killSwitchActive: true });
+    expect(evaluateRisk(proposal({ side: 'BUY' }), s).reason).toBe(
+      'KILL_SWITCH_ACTIVE',
+    );
+    expect(evaluateRisk(proposal({ side: 'SELL' }), s).allowed).toBe(true);
+  });
+
+  it('position-size and open-position gates apply to BUY only', () => {
+    expect(
+      evaluateRisk(
+        proposal({ amountSol: 1, side: 'SELL' }),
+        snapshot({ currentOpenPositions: 99 }),
+      ).allowed,
+    ).toBe(true);
+    expect(evaluateRisk(proposal({ amountSol: 1 }), snapshot()).reason).toBe(
+      'MAX_POSITION_SIZE_EXCEEDED',
+    );
+  });
+
+  it('exits still honor execution sanity limits', () => {
+    const r = evaluateRisk(
+      proposal({ side: 'SELL', expectedSlippageBps: 5000 }),
+      snapshot(),
+    );
+    expect(r.reason).toBe('MAX_SLIPPAGE_EXCEEDED');
+  });
+
+  it('exits still honor quote freshness', () => {
+    const now = Date.now();
+    const r = evaluateRisk(
+      proposal({ side: 'SELL', quoteFetchedAt: now - 60_000 }),
+      snapshot({ now }),
+    );
+    expect(r.reason).toBe('STALE_QUOTE');
   });
 });

@@ -16,6 +16,7 @@ dist/
 logs/
 *.log
 *.pid
+nohup.out
 
 # Test coverage
 coverage/
@@ -33,15 +34,7 @@ Thumbs.db
 *-capture.json
 sweep-results*.json
 mints.txt.bak
-<<<<<<< HEAD
 launch-mints.txt
-launch-mints.txt
-=======
-
-# Local secrets
-.env
-.env.*
-!.env.example
 
 # Large local research data (downloads)
 research/kaggle-graduation/
@@ -49,32 +42,13 @@ research/red-pump/
 research/kaggle-sss/
 *.zip
 
-# Logs
-*.log
-nohup.out
-
 # tsx scratch scripts
 debug-tx.ts
 test-*.ts
 test_*.ts
 
-# Local secrets
-.env
-.env.*
-!.env.example
-
-# Large local research data (downloads)
-research/kaggle-graduation/
-research/red-pump/
-research/kaggle-sss/
-*.zip
-
-# Logs
-*.log
-nohup.out
-
-# tsx scratch scripts
-debug-tx.ts
-test-*.ts
-test_*.ts
->>>>>>> 5367055 (capture: add pool event capture + analysis, fix pumpfun mint index)
+# Raw mainnet captures & research lists (untracked, kept locally)
+candidates.txt
+mints.old.txt
+pumpswap-create.json
+pumpfun-bonding.json

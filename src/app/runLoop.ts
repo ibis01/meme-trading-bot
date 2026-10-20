@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { buildProductionApp } from './productionBootstrap';
 import { SignalLoop } from './signalLoop';
+import { ExitMonitor } from './exitMonitor';
 import { FixtureFeed, ProviderFeed, MarketFeed } from '../data/feed';
 import { BirdeyeMarketProvider } from '../data/birdeye';
 import { DexScreenerMarketProvider } from '../data/dexscreener';
@@ -37,7 +38,10 @@ function demoSnapshot(): MarketSnapshot {
 function readMints(): string[] {
   const env = process.env.RECORDER_MINTS;
   if (env) {
-    return env.split(',').map((s) => s.trim()).filter(Boolean);
+    return env
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
   const file = path.resolve(process.cwd(), 'mints.txt');
   if (!fs.existsSync(file)) return [];
@@ -75,7 +79,10 @@ export function buildFeed(): MarketFeed {
       );
     }
     const provider = buildProvider();
-    logger.info({ provider: provider.name, mints: mints.length }, 'Using live market feed');
+    logger.info(
+      { provider: provider.name, mints: mints.length },
+      'Using live market feed',
+    );
     return new ProviderFeed(provider, mints);
   }
 
@@ -88,9 +95,22 @@ export function buildFeed(): MarketFeed {
 
 async function main() {
   logger.info(
-    { tradingMode: config.TRADING_MODE, marketSource: process.env.MARKET_SOURCE ?? 'fixture' },
+    {
+      tradingMode: config.TRADING_MODE,
+      marketSource: process.env.MARKET_SOURCE ?? 'fixture',
+    },
     'Starting bot in loop mode',
   );
+
+  // Audit fix M6: synthetic demo data must never drive a live process.
+  const marketSource = process.env.MARKET_SOURCE ?? 'fixture';
+  if (config.TRADING_MODE === 'live' && marketSource === 'fixture') {
+    logger.fatal(
+      'REFUSING TO START: TRADING_MODE=live with MARKET_SOURCE=fixture. ' +
+        'Set MARKET_SOURCE=dexscreener (or provider) to trade on real data.',
+    );
+    process.exit(1);
+  }
 
   const app = buildProductionApp();
   const feed = buildFeed();
@@ -99,7 +119,11 @@ async function main() {
     {
       feed,
       strategy: new MomentumStrategy(defaultMomentumConfig),
-      strategyContext: { equitySol: 10, riskPerTradeSol: 0.1, maxPositionSol: 0.1 },
+      strategyContext: {
+        equitySol: 10,
+        riskPerTradeSol: 0.1,
+        maxPositionSol: 0.1,
+      },
       orchestrator: app.orchestrator,
       executor: app.executor,
     },
@@ -107,6 +131,26 @@ async function main() {
   );
 
   loop.start();
+
+  // Audit fix H1: automated exits. Without this the loop was BUY-only and
+  // every position exit was manual. Exits ride the same pipeline
+  // (orchestrator → risk engine → executor) as every other trade.
+  const exitMarket = buildExitMarketProvider();
+  const exitMonitor = new ExitMonitor({
+    positions: app.positions,
+    market: exitMarket,
+    orchestrator: app.orchestrator,
+    executor: app.executor,
+    rules: {
+      stopLossPercent: config.EXIT_STOP_LOSS_PERCENT,
+      takeProfitPercent: config.EXIT_TAKE_PROFIT_PERCENT,
+      maxHoldMs: config.EXIT_MAX_HOLD_MS,
+    },
+    exitSlippageBps: config.MAX_SLIPPAGE_BPS,
+    exitPriceImpactBps: config.MAX_PRICE_IMPACT_BPS,
+    intervalMs: config.EXIT_CHECK_INTERVAL_MS,
+  });
+  exitMonitor.start();
 
   // P1-12: start the Telegram control plane if configured.
   let telegramBot: ReturnType<typeof startTelegramBot> = null;
@@ -119,12 +163,14 @@ async function main() {
     telegramBot = startTelegramBot({
       positions: app.positions,
       proposals: app.proposals,
-      onTradeRequest: async (req) => tradeHandler.handle({
-        userId: req.userId,
-        kind: req.kind,
-        tokenMint: req.tokenMint,
-        amountSol: req.amountSol,
-      }),
+      onTradeRequest: async (req) =>
+        tradeHandler.handle({
+          userId: req.userId,
+          kind: req.kind,
+          tokenMint: req.tokenMint,
+          amountSol: req.amountSol,
+          sellPercentBps: req.sellPercentBps,
+        }),
       onCloseAll: async (userId) => tradeHandler.closeAll(userId),
     });
   } else {
@@ -133,16 +179,46 @@ async function main() {
 
   const shutdown = async (signal: string) => {
     logger.warn({ event: 'SHUTDOWN_RECEIVED', signal }, 'Shutting down…');
-    try { telegramBot?.stop('shutdown'); } catch { /* ignore */ }
+    try {
+      telegramBot?.stop('shutdown');
+    } catch {
+      /* ignore */
+    }
+    await exitMonitor.stop();
     await loop.stop();
-    try { await closeRedis(); } catch { /* ignore */ }
-    try { await closePool(); } catch { /* ignore */ }
+    try {
+      await closeRedis();
+    } catch {
+      /* ignore */
+    }
+    try {
+      await closePool();
+    } catch {
+      /* ignore */
+    }
     logger.info({ event: 'SHUTDOWN_COMPLETE' }, 'Shutdown complete');
     process.exit(0);
   };
 
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+/**
+ * Exit pricing uses a dedicated provider: positions opened via /buy may be
+ * for mints that are not in mints.txt (the loop feed only polls those), so
+ * the monitor needs per-mint lookups. DexScreener: no API key, ~300 req/min.
+ */
+function buildExitMarketProvider(): MarketDataProvider {
+  const source = process.env.EXIT_MARKET_SOURCE ?? 'dexscreener';
+  if (source === 'birdeye') {
+    const apiKey = config.BIRDEYE_API_KEY;
+    if (!apiKey) {
+      throw new Error('EXIT_MARKET_SOURCE=birdeye requires BIRDEYE_API_KEY.');
+    }
+    return new BirdeyeMarketProvider(apiKey);
+  }
+  return new DexScreenerMarketProvider();
 }
 
 // Only run when invoked directly (not when imported by tests).

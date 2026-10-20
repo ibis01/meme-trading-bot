@@ -17,6 +17,8 @@ export interface TradeRequest {
   kind: 'BUY' | 'SELL';
   tokenMint: string;
   amountSol?: number;
+  /** SELL only: fraction of the position to close, in bps (10000 = full). */
+  sellPercentBps?: number;
 }
 
 export interface TradeRequestResult {
@@ -35,17 +37,20 @@ export class TelegramTradeHandler {
   constructor(private readonly deps: TradeHandlerDeps) {}
 
   async handle(request: TradeRequest): Promise<TradeRequestResult> {
-    const amount = request.amountSol ?? 0.05;
-
     // Rule 35: reject obviously invalid input before producing a Signal.
-    if (amount <= 0) {
-      return { ok: false, message: 'Amount must be positive.' };
-    }
     if (!isLikelyPubkey(request.tokenMint)) {
       return { ok: false, message: 'Invalid token mint.' };
     }
 
-    const signal = this.buildSignal(request, amount);
+    let amountSol = 0;
+    if (request.kind === 'BUY') {
+      amountSol = request.amountSol ?? 0.05;
+      if (amountSol <= 0) {
+        return { ok: false, message: 'Amount must be positive.' };
+      }
+    }
+
+    const signal = this.buildSignal(request, amountSol);
     const orchResult = await this.deps.orchestrator.process(signal);
 
     if (orchResult.kind === 'REJECTED') {
@@ -75,19 +80,28 @@ export class TelegramTradeHandler {
       case 'DUPLICATE':
         return { ok: false, message: 'Already executed.' };
       case 'REJECTED':
-        return { ok: false, message: `Execution blocked: ${execResult.reason}` };
+        return {
+          ok: false,
+          message: `Execution blocked: ${execResult.reason}`,
+        };
       case 'FAILED':
         return { ok: false, message: `Execution failed: ${execResult.reason}` };
       case 'SUBMITTED':
         return { ok: true, message: '📤 Submitted — awaiting confirmation.' };
       case 'UNKNOWN':
-        return { ok: false, message: '⚠️ Execution UNKNOWN — manual reconciliation required.' };
+        return {
+          ok: false,
+          message: '⚠️ Execution UNKNOWN — manual reconciliation required.',
+        };
       default: {
         // If this line fails to compile, ExecuteResult gained a variant
         // that handle() does not yet know about. Add a case above; do not
         // silence the error.
         const _exhaustive: never = execResult;
-        return { ok: false, message: `Execution failed: unknown executor state (${String(_exhaustive)}).` };
+        return {
+          ok: false,
+          message: `Execution failed: unknown executor state (${String(_exhaustive)}).`,
+        };
       }
     }
   }
@@ -124,7 +138,10 @@ export class TelegramTradeHandler {
       } catch (err) {
         failed += 1;
         results.push(`✗ ${position.tokenMint.slice(0, 8)}… — unexpected error`);
-        _logger.error({ event: 'CLOSEALL_ITEM_FAILED', tokenMint: position.tokenMint, err }, 'close-all item failed');
+        _logger.error(
+          { event: 'CLOSEALL_ITEM_FAILED', tokenMint: position.tokenMint, err },
+          'close-all item failed',
+        );
       }
     }
 
@@ -134,6 +151,15 @@ export class TelegramTradeHandler {
     };
   }
 
+  /**
+   * Builds the Signal for a manual trade.
+   *
+   * Audit fix M8: no fabricated market snapshot. The previously-zeroed
+   * snapshot (priceUsd: 0, liquidityUsd: 0, ...) was persisted as evidence
+   * and would poison any downstream analytics. Manual trades carry no
+   * snapshot; token-quality gating happens in the orchestrator via the
+   * security provider (real RugCheck data), which is the authoritative path.
+   */
   private buildSignal(request: TradeRequest, amountSol: number): Signal {
     return {
       id: randomUUID(),
@@ -146,20 +172,10 @@ export class TelegramTradeHandler {
       proposedAmountSol: amountSol,
       proposedSlippageBps: 150,
       proposedPriceImpactBps: 200,
+      sellPercentBps: request.sellPercentBps,
       evidence: {
-        marketSnapshot: {
-          tokenMint: request.tokenMint,
-          fetchedAt: Date.now(),
-          priceUsd: 0,
-          liquidityUsd: 0,
-          volume24hUsd: 0,
-          priceChange5mPercent: 0,
-          priceChange1hPercent: 0,
-          holderCount: 0,
-          top10HolderPercent: 0,
-        },
         indicators: {},
-        entryReason: `telegram /${request.kind.toLowerCase()} by user ${request.userId}`,
+        entryReason: `telegram /${request.kind.toLowerCase()} by user ${request.userId} (manual — no market snapshot)`,
       },
     };
   }

@@ -1,5 +1,8 @@
 import { TradeExecutor } from '../src/execution/executor';
-import { PaperExecutionProvider, StaticPriceOracle } from '../src/execution/paper';
+import {
+  PaperExecutionProvider,
+  StaticPriceOracle,
+} from '../src/execution/paper';
 import { RiskEngine } from '../src/risk/engine';
 import { IdempotencyService, RedisLike } from '../src/infra/idempotency';
 import { InMemoryExecutionStore } from '../src/state/executions';
@@ -33,7 +36,9 @@ class MockRedis implements RedisLike {
     this.store.set(key, { v: value, exp: now + ttl });
     return 'OK' as const;
   }
-  async del(key: string) { return this.store.delete(key) ? 1 : 0; }
+  async del(key: string) {
+    return this.store.delete(key) ? 1 : 0;
+  }
 }
 
 const safeProposal = (o: Partial<StoredProposal> = {}): StoredProposal => ({
@@ -73,9 +78,18 @@ function mkExecutor() {
   const proposals = new InMemoryProposalStore();
   const executions = new InMemoryExecutionStore();
   const idempotency = new IdempotencyService(new MockRedis());
-  const provider = new PaperExecutionProvider(new StaticPriceOracle({ mint: 0.01 }));
+  const provider = new PaperExecutionProvider(
+    new StaticPriceOracle({ mint: 0.01 }),
+  );
   const executor = new TradeExecutor({
-    riskEngine, killSwitch, positions, proposals, executions, idempotency, provider, pnl,
+    riskEngine,
+    killSwitch,
+    positions,
+    proposals,
+    executions,
+    idempotency,
+    provider,
+    pnl,
   });
   return { executor, proposals, executions, killSwitch, positions };
 }
@@ -134,12 +148,25 @@ describe('TradeExecutor (Rules 11, 14, 24, 25, 34)', () => {
 
   it('DECREMENTS positions on SELL', async () => {
     const { executor, positions } = mkExecutor();
-    await positions.open({ tokenMint: 'mintA', tradeRequestId: 'tr_a', quantity: 0.05, priceSol: 1, signature: 'sig_a' });
-    await positions.open({ tokenMint: 'mintB', tradeRequestId: 'tr_b', quantity: 0.05, priceSol: 1, signature: 'sig_b' });
-    const sell = safeProposal({
-      proposal: { ...safeProposal().proposal, side: 'SELL', tokenMint: 'mintA' },
+    // Open one position through the executor (ledger + paper wallet stay
+    // consistent), and one directly through the ledger.
+    await executor.execute(safeProposal());
+    await positions.open({
+      tokenMint: 'mintB',
+      tradeRequestId: 'tr_b',
+      quantity: 0.05,
+      priceSol: 1,
+      signature: 'sig_b',
     });
-    await executor.execute(sell);
+    expect(await positions.getOpenCount()).toBe(2);
+    const sell = safeProposal({
+      id: 'prop_sell',
+      tradeRequestId: 'sig:sell_1',
+      signalId: 'sig_sell',
+      proposal: { ...safeProposal().proposal, side: 'SELL', tokenMint: 'mint' },
+    });
+    const r = await executor.execute(sell);
+    expect(r.kind).toBe('CONFIRMED');
     expect(await positions.getOpenCount()).toBe(1);
   });
 });

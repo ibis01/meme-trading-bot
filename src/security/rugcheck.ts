@@ -1,4 +1,8 @@
-import { SecurityProvider, TokenSecurityEvidence, unsafeEvidence } from './types';
+import {
+  SecurityProvider,
+  TokenSecurityEvidence,
+  unsafeEvidence,
+} from './types';
 import { logger } from '../utils/logger';
 
 /**
@@ -33,18 +37,38 @@ export class RugCheckProvider implements SecurityProvider {
       const devNum = typeof dev === 'number' ? dev : Number(dev);
       const liqNum = typeof liq === 'number' ? liq : Number(liq);
 
-      if (!Number.isFinite(top10Num) || !Number.isFinite(devNum) || !Number.isFinite(liqNum)) {
+      // Fail-closed on REQUIRED fields being ABSENT (audit fix H2).
+      // `undefined` authority/rugged fields previously evaluated as
+      // "authority disabled" / "sellability confirmed" via negation — a
+      // silent fail-OPEN on the two most dangerous rug vectors. Null is a
+      // meaningful value (no authority set); undefined means the API shape
+      // changed and we must not guess.
+      const hasAuthorityData =
+        (data.mintAuthority !== undefined ||
+          data.mint_authority !== undefined) &&
+        (data.freezeAuthority !== undefined ||
+          data.freeze_authority !== undefined) &&
+        data.rugged !== undefined;
+      if (
+        !hasAuthorityData ||
+        !Number.isFinite(top10Num) ||
+        !Number.isFinite(devNum) ||
+        !Number.isFinite(liqNum)
+      ) {
         logger.warn(
           { event: 'SECURITY_DATA_INCOMPLETE', token: tokenMint },
-          'RugCheck response missing required numeric fields — failing closed',
+          'RugCheck response missing required fields — failing closed',
         );
         return unsafeEvidence(tokenMint, 'rugcheck');
       }
 
       return {
         tokenMint,
-        mintAuthorityDisabled: !mintAuthority,
-        freezeAuthorityDisabled: !freezeAuthority,
+        // null = no authority set = disabled. Any non-null value (pubkey)
+        // means the authority is live. (?? null guards the camelCase-null
+        // case: null is a meaningful value, not a fall-through.)
+        mintAuthorityDisabled: (mintAuthority ?? null) === null,
+        freezeAuthorityDisabled: (freezeAuthority ?? null) === null,
         top10HolderPercent: top10Num,
         devWalletPercent: devNum,
         liquidityUsd: liqNum,
@@ -53,7 +77,10 @@ export class RugCheckProvider implements SecurityProvider {
         source: 'rugcheck',
       };
     } catch (err) {
-      logger.error({ event: 'SECURITY_DATA_ERROR', token: tokenMint, err }, 'RugCheck fetch failed');
+      logger.error(
+        { event: 'SECURITY_DATA_ERROR', token: tokenMint, err },
+        'RugCheck fetch failed',
+      );
       return unsafeEvidence(tokenMint, 'rugcheck');
     }
   }

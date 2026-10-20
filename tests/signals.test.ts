@@ -1,8 +1,15 @@
 import { InMemorySignalStore } from '../src/state/signals';
-import { MomentumStrategy, defaultMomentumConfig } from '../src/strategy/momentum';
+import {
+  MomentumStrategy,
+  defaultMomentumConfig,
+} from '../src/strategy/momentum';
 import { MarketSnapshot, StrategyContext } from '../src/strategy/types';
 
-const ctx: StrategyContext = { equitySol: 10, riskPerTradeSol: 0.1, maxPositionSol: 0.1 };
+const ctx: StrategyContext = {
+  equitySol: 10,
+  riskPerTradeSol: 0.1,
+  maxPositionSol: 0.1,
+};
 const market: MarketSnapshot = {
   tokenMint: 'mint',
   fetchedAt: Date.now(),
@@ -25,7 +32,7 @@ describe('SignalStore (Rule 20)', () => {
     const loaded = await store.getById(signal.id);
     expect(loaded).not.toBeNull();
     expect(loaded!.evidence.entryReason).toBe(signal.evidence.entryReason);
-    expect(loaded!.evidence.marketSnapshot.tokenMint).toBe('mint');
+    expect(loaded!.evidence.marketSnapshot?.tokenMint).toBe('mint');
     expect(loaded!.evidence.indicators.score).toBe(signal.score);
   });
 

@@ -34,7 +34,9 @@ export function startTelegramBot(deps: TelegramDeps): Telegraf | null {
 
   const authorizedIds = parseAuthorizedIds(config.TELEGRAM_AUTHORIZED_USER_IDS);
   if (authorizedIds.length === 0) {
-    logger.warn('TELEGRAM_AUTHORIZED_USER_IDS empty — all commands will be rejected.');
+    logger.warn(
+      'TELEGRAM_AUTHORIZED_USER_IDS empty — all commands will be rejected.',
+    );
   }
 
   const authorizer = new Authorizer(authorizedIds);
@@ -53,38 +55,80 @@ export function startTelegramBot(deps: TelegramDeps): Telegraf | null {
     onCloseAll: deps.onCloseAll,
   });
 
-  const reply = async (msg: { from?: { id?: number }; reply: (s: string) => unknown }, r: { message: string }) => {
-    await msg.reply(r.message);
+  /**
+   * Audit fix H3: every handler previously returned an uncaught promise —
+   * a rejection (e.g. Redis hiccup inside a kill-switch read) surfaced as a
+   * silent Telegraf-internal error: the user got no reply and nobody was
+   * told. Wrap everything: answer the user, log, audit.
+   */
+  const safeReply = async (
+    m: { from?: { id?: number }; reply: (s: string) => unknown },
+    fn: (c: CommandContext) => Promise<{ ok: boolean; message: string }>,
+  ): Promise<void> => {
+    try {
+      const r = await fn(ctx(m.from?.id));
+      // Empty message = handler chose to stay silent (e.g. free text that is
+      // not a confirmation). Never send '' — the Bot API rejects it.
+      if (r.message) await m.reply(r.message);
+    } catch (err) {
+      logger.error(
+        { event: 'TG_HANDLER_ERROR', userId: m.from?.id, err },
+        'Telegram command failed',
+      );
+      try {
+        await m.reply(
+          '⚠️ Internal error handling that command. Check bot logs.',
+        );
+      } catch {
+        /* nothing more we can do */
+      }
+    }
   };
 
-  bot.command('help', (m) => reply(m, { message: '' }).then(() => handleHelp(ctx(m.from?.id)).then((r) => m.reply(r.message))));
-  bot.command('status', (m) => handleStatus(ctx(m.from?.id)).then((r) => m.reply(r.message)));
-  bot.command('positions', (m) => handlePositions(ctx(m.from?.id)).then((r) => m.reply(r.message)));
-  bot.command('pause', (m) => handlePause(ctx(m.from?.id)).then((r) => m.reply(r.message)));
-  bot.command('resume', (m) => handleResume(ctx(m.from?.id)).then((r) => m.reply(r.message)));
-  bot.command('emergency', (m) => handleEmergency(ctx(m.from?.id)).then((r) => m.reply(r.message)));
+  bot.command('help', (m) => safeReply(m, (c) => handleHelp(c)));
+  bot.command('status', (m) => safeReply(m, (c) => handleStatus(c)));
+  bot.command('positions', (m) => safeReply(m, (c) => handlePositions(c)));
+  bot.command('pause', (m) => safeReply(m, (c) => handlePause(c)));
+  bot.command('resume', (m) => safeReply(m, (c) => handleResume(c)));
+  bot.command('emergency', (m) => safeReply(m, (c) => handleEmergency(c)));
+  bot.command('closeall', (m) => safeReply(m, (c) => handleCloseAll(c)));
 
-  bot.command('buy', (m) => {
-    const text = (m.message as { text?: string }).text ?? '';
-    const args = text.split(/\s+/).slice(1);
-    return handleBuy(ctx(m.from?.id), args).then((r) => m.reply(r.message));
-  });
-  bot.command('sell', (m) => {
-    const text = (m.message as { text?: string }).text ?? '';
-    const args = text.split(/\s+/).slice(1);
-    return handleSell(ctx(m.from?.id), args).then((r) => m.reply(r.message));
-  });
-  bot.command('closeall', (m) => handleCloseAll(ctx(m.from?.id)).then((r) => m.reply(r.message)));
+  bot.command('buy', (m) =>
+    safeReply(m, async (c) => {
+      const text = (m.message as { text?: string }).text ?? '';
+      return handleBuy(c, text.split(/\s+/).slice(1));
+    }),
+  );
+  bot.command('sell', (m) =>
+    safeReply(m, async (c) => {
+      const text = (m.message as { text?: string }).text ?? '';
+      return handleSell(c, text.split(/\s+/).slice(1));
+    }),
+  );
 
   // Free-text confirmation handler
-  bot.on('text', async (m) => {
-    const text = (m.message as { text?: string }).text ?? '';
-    if (text.startsWith('/')) return; // handled above
-    const result = await handleConfirmationText(ctx(m.from?.id), text);
-    if (result) await m.reply(result.message);
+  bot.on('text', (m) =>
+    safeReply(m, async (c) => {
+      const text = (m.message as { text?: string }).text ?? '';
+      if (text.startsWith('/')) return { ok: true, message: '' }; // handled by commands above
+      const result = await handleConfirmationText(c, text);
+      return result ?? { ok: true, message: '' }; // not a confirmation — stay silent
+    }),
+  );
+
+  // Audit fix H3: last-resort error handler so nothing escapes unobserved.
+  bot.catch((err, m) => {
+    logger.error(
+      { event: 'TG_UNHANDLED_ERROR', err, updateId: m?.update?.update_id },
+      'Unhandled Telegraf error',
+    );
   });
 
-  bot.launch().catch((err) => logger.error({ err }, 'Telegram launch failed'));
+  // dropPendingUpdates: a restart must not replay stale /buy or /resume
+  // commands that were queued while the process was down (audit, Low).
+  bot
+    .launch({ dropPendingUpdates: true })
+    .catch((err) => logger.error({ err }, 'Telegram launch failed'));
   logger.info({ authorizedIds }, 'Telegram bot started');
   return bot;
 }

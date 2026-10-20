@@ -43,18 +43,28 @@ export class TradeExecutor {
   async execute(proposal: StoredProposal): Promise<ExecuteResult> {
     // Stage 1: VALIDATE (no side effects)
     if (proposal.status !== 'APPROVED') {
-      return { kind: 'REJECTED', reason: `PROPOSAL_NOT_APPROVED:${proposal.status}` };
+      return {
+        kind: 'REJECTED',
+        reason: `PROPOSAL_NOT_APPROVED:${proposal.status}`,
+      };
     }
 
     // Stage 2: idempotency acquire
-    const firstTime = await this.deps.idempotency.acquire(this.execKey(proposal.tradeRequestId));
+    const firstTime = await this.deps.idempotency.acquire(
+      this.execKey(proposal.tradeRequestId),
+    );
     if (!firstTime) {
-      const existing = await this.deps.executions.getByRequestId(proposal.tradeRequestId);
+      const existing = await this.deps.executions.getByRequestId(
+        proposal.tradeRequestId,
+      );
       if (existing) {
         // Re-route to the correct result kind based on the persisted status.
-        if (existing.status === 'CONFIRMED') return { kind: 'CONFIRMED', execution: existing };
-        if (existing.status === 'SUBMITTED') return { kind: 'SUBMITTED', execution: existing };
-        if (existing.status === 'UNKNOWN') return { kind: 'UNKNOWN', execution: existing };
+        if (existing.status === 'CONFIRMED')
+          return { kind: 'CONFIRMED', execution: existing };
+        if (existing.status === 'SUBMITTED')
+          return { kind: 'SUBMITTED', execution: existing };
+        if (existing.status === 'UNKNOWN')
+          return { kind: 'UNKNOWN', execution: existing };
         return { kind: 'DUPLICATE', execution: existing };
       }
       return { kind: 'FAILED', reason: 'DUPLICATE_IN_FLIGHT' };
@@ -65,26 +75,68 @@ export class TradeExecutor {
     let submitStarted = false;
 
     try {
-      // Stage 3: kill switch recheck (Rule 14)
-      const ks = await this.deps.killSwitch.get();
-      if (ks.active) {
-        await this.deps.idempotency.release(this.execKey(proposal.tradeRequestId));
-        logger.warn(
-          { event: 'EXECUTION_BLOCKED', tradeRequestId: proposal.tradeRequestId, reason: 'KILL_SWITCH_ACTIVE' },
-          'Execution blocked by kill switch',
-        );
-        return { kind: 'REJECTED', reason: 'KILL_SWITCH_ACTIVE' };
+      // Stage 3: kill switch recheck (Rule 14) — side-aware (audit fix C2):
+      // the switch blocks new risk (BUYs); SELLs stay available so /pause or
+      // /emergency can never trap open positions with no way to flatten.
+      if (proposal.proposal.side === 'BUY') {
+        const ks = await this.deps.killSwitch.get();
+        if (ks.active) {
+          await this.deps.idempotency.release(
+            this.execKey(proposal.tradeRequestId),
+          );
+          logger.warn(
+            {
+              event: 'EXECUTION_BLOCKED',
+              tradeRequestId: proposal.tradeRequestId,
+              reason: 'KILL_SWITCH_ACTIVE',
+            },
+            'Execution blocked by kill switch',
+          );
+          return { kind: 'REJECTED', reason: 'KILL_SWITCH_ACTIVE' };
+        }
       }
 
       // Stage 4: risk re-evaluation (catches stale quotes)
       const fresh = await this.deps.riskEngine.evaluate(proposal.proposal);
       if (!fresh.allowed) {
-        await this.deps.idempotency.release(this.execKey(proposal.tradeRequestId));
+        await this.deps.idempotency.release(
+          this.execKey(proposal.tradeRequestId),
+        );
         logger.warn(
-          { event: 'EXECUTION_BLOCKED', tradeRequestId: proposal.tradeRequestId, reason: fresh.reason },
+          {
+            event: 'EXECUTION_BLOCKED',
+            tradeRequestId: proposal.tradeRequestId,
+            reason: fresh.reason,
+          },
           'Execution blocked by risk re-evaluation',
         );
         return { kind: 'REJECTED', reason: fresh.reason ?? 'RISK_REJECTED' };
+      }
+
+      // Stage 4.5 (SELL): resolve the position BEFORE submission so the
+      // provider knows the exact token quantity to sell. Failing here is a
+      // pre-submit rejection (safe to retry later, unlike a fill with no
+      // position on record).
+      let sellTokenAmount: number | undefined;
+      if (proposal.proposal.side === 'SELL') {
+        const held = await this.deps.positions.get(proposal.proposal.tokenMint);
+        if (!held || held.quantity <= 0) {
+          await this.deps.idempotency.release(
+            this.execKey(proposal.tradeRequestId),
+          );
+          logger.warn(
+            {
+              event: 'SELL_NO_POSITION',
+              tradeRequestId: proposal.tradeRequestId,
+              tokenMint: proposal.proposal.tokenMint,
+            },
+            'Sell rejected — no open position on record',
+          );
+          return { kind: 'REJECTED', reason: 'NO_OPEN_POSITION' };
+        }
+        const pct = proposal.proposal.sellPercentBps ?? 10_000;
+        sellTokenAmount =
+          held.quantity * (Math.min(Math.max(pct, 1), 10_000) / 10_000);
       }
 
       // Stage 5: provider safety gate (Rule 34)
@@ -101,6 +153,7 @@ export class TradeExecutor {
         tokenMint: proposal.proposal.tokenMint,
         side: proposal.proposal.side,
         amountSol: proposal.proposal.amountSol,
+        tokenAmount: sellTokenAmount,
         maxSlippageBps: proposal.proposal.expectedSlippageBps,
         maxPriceImpactBps: proposal.proposal.expectedPriceImpactBps,
         quoteFetchedAt: proposal.proposal.quoteFetchedAt,
@@ -119,10 +172,16 @@ export class TradeExecutor {
 
       // Duplicate signature guard (Rule 24)
       if (outcome.txSignature) {
-        const clash = await this.deps.executions.getBySignature(outcome.txSignature);
+        const clash = await this.deps.executions.getBySignature(
+          outcome.txSignature,
+        );
         if (clash) {
           logger.error(
-            { event: 'DUPLICATE_SIGNATURE', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature },
+            {
+              event: 'DUPLICATE_SIGNATURE',
+              tradeRequestId: proposal.tradeRequestId,
+              txSignature: outcome.txSignature,
+            },
             'Duplicate tx signature — refusing to persist',
           );
           // Keep the lock: this submission reached the network and produced a signature.
@@ -136,7 +195,12 @@ export class TradeExecutor {
         await this.deps.proposals.updateStatus(proposal.id, 'EXECUTED');
         await this.bookConfirmedFill(proposal, outcome);
         logger.info(
-          { event: 'EXECUTION_CONFIRMED', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature, provider: this.deps.provider.name },
+          {
+            event: 'EXECUTION_CONFIRMED',
+            tradeRequestId: proposal.tradeRequestId,
+            txSignature: outcome.txSignature,
+            provider: this.deps.provider.name,
+          },
           'Execution confirmed',
         );
         return { kind: 'CONFIRMED', execution: stored };
@@ -145,7 +209,11 @@ export class TradeExecutor {
       if (outcome.status === 'SUBMITTED') {
         await this.deps.proposals.updateStatus(proposal.id, 'SUBMITTED');
         logger.info(
-          { event: 'EXECUTION_SUBMITTED', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature },
+          {
+            event: 'EXECUTION_SUBMITTED',
+            tradeRequestId: proposal.tradeRequestId,
+            txSignature: outcome.txSignature,
+          },
           'Execution submitted — awaiting confirmation (reconcile later)',
         );
         return { kind: 'SUBMITTED', execution: stored };
@@ -154,7 +222,11 @@ export class TradeExecutor {
       if (outcome.status === 'UNKNOWN') {
         await this.deps.proposals.updateStatus(proposal.id, 'UNKNOWN');
         logger.error(
-          { event: 'EXECUTION_UNKNOWN', tradeRequestId: proposal.tradeRequestId, error: outcome.error },
+          {
+            event: 'EXECUTION_UNKNOWN',
+            tradeRequestId: proposal.tradeRequestId,
+            error: outcome.error,
+          },
           'Execution state UNKNOWN — lock retained, manual reconciliation required',
         );
         return { kind: 'UNKNOWN', execution: stored };
@@ -163,7 +235,11 @@ export class TradeExecutor {
       // FAILED: provider is confident the tx did not land.
       await this.deps.proposals.updateStatus(proposal.id, 'FAILED');
       logger.error(
-        { event: 'EXECUTION_FAILED', tradeRequestId: proposal.tradeRequestId, error: outcome.error },
+        {
+          event: 'EXECUTION_FAILED',
+          tradeRequestId: proposal.tradeRequestId,
+          error: outcome.error,
+        },
         'Execution failed at provider',
       );
       // Keep the lock — a tx with this signature could still exist.
@@ -173,14 +249,27 @@ export class TradeExecutor {
 
       if (!submitStarted) {
         // Pre-submit exception: safe to release the lock.
-        await this.deps.idempotency.release(this.execKey(proposal.tradeRequestId));
-        logger.error({ event: 'EXECUTION_ERROR_PRE_SUBMIT', tradeRequestId: proposal.tradeRequestId, err }, 'Pre-submit error');
+        await this.deps.idempotency.release(
+          this.execKey(proposal.tradeRequestId),
+        );
+        logger.error(
+          {
+            event: 'EXECUTION_ERROR_PRE_SUBMIT',
+            tradeRequestId: proposal.tradeRequestId,
+            err,
+          },
+          'Pre-submit error',
+        );
         return { kind: 'FAILED', reason };
       }
 
       // Post-submit exception: NEVER release. Record as UNKNOWN for reconciliation.
       logger.error(
-        { event: 'EXECUTION_ERROR_POST_SUBMIT', tradeRequestId: proposal.tradeRequestId, err },
+        {
+          event: 'EXECUTION_ERROR_POST_SUBMIT',
+          tradeRequestId: proposal.tradeRequestId,
+          err,
+        },
         'Post-submit error — recording as UNKNOWN',
       );
       const unknownStored: StoredExecution = {
@@ -197,7 +286,11 @@ export class TradeExecutor {
         await this.deps.proposals.updateStatus(proposal.id, 'UNKNOWN');
       } catch (saveErr) {
         logger.error(
-          { event: 'UNKNOWN_PERSIST_FAILED', tradeRequestId: proposal.tradeRequestId, saveErr },
+          {
+            event: 'UNKNOWN_PERSIST_FAILED',
+            tradeRequestId: proposal.tradeRequestId,
+            saveErr,
+          },
           'Failed to persist UNKNOWN execution — this is severe, manual reconciliation needed',
         );
       }
@@ -205,44 +298,80 @@ export class TradeExecutor {
     }
   }
 
+  /**
+   * Reconciles a CONFIRMED fill with the position ledger.
+   *
+   * Token-unit model (audit fix C1):
+   *   BUY  — quantity = tokens received, priceSol = SOL spent per token.
+   *   SELL — quantity = tokens sold,      priceSol = SOL received per token.
+   * realizedPnlSol = proceeds − qty × avgCostSol is then a REAL number, and
+   * the daily-loss gate can actually fire. A CONFIRMED fill without a usable
+   * token amount is treated as a reconciliation failure and never silently
+   * booked as zero PnL.
+   */
   private async bookConfirmedFill(
     proposal: StoredProposal,
-    outcome: { filledAmountSol: number; txSignature: string },
+    outcome: {
+      filledAmountSol: number;
+      filledTokenAmount: number;
+      txSignature: string;
+    },
   ): Promise<void> {
     try {
+      const tokens = outcome.filledTokenAmount;
+      const sol = outcome.filledAmountSol;
+      if (!(tokens > 0) || !(sol > 0)) {
+        throw new Error(
+          `UNUSABLE_FILL_AMOUNTS(tokens=${tokens}, sol=${sol}) — refusing to book a fabricated position`,
+        );
+      }
+
       if (proposal.proposal.side === 'BUY') {
         await this.deps.positions.open({
           tokenMint: proposal.proposal.tokenMint,
           tradeRequestId: proposal.tradeRequestId,
-          quantity: outcome.filledAmountSol,
-          priceSol: 1,
+          quantity: tokens,
+          priceSol: sol / tokens,
           signature: outcome.txSignature,
         });
       } else {
         const held = await this.deps.positions.get(proposal.proposal.tokenMint);
-        if (held && held.quantity > 0) {
-          const closeResult = await this.deps.positions.close({
-            tokenMint: proposal.proposal.tokenMint,
-            tradeRequestId: proposal.tradeRequestId,
-            quantity: held.quantity,
-            priceSol: 1,
-            signature: outcome.txSignature,
-          });
-          await this.deps.pnl.addSol(closeResult.realizedPnlSol);
-          logger.info(
-            { event: 'PNL_RECORDED', tradeRequestId: proposal.tradeRequestId, realizedSol: closeResult.realizedPnlSol },
-            'Realized PnL recorded',
-          );
-        } else {
+        if (!held || held.quantity <= 0) {
           logger.warn(
-            { event: 'SELL_WITHOUT_POSITION', tradeRequestId: proposal.tradeRequestId },
+            {
+              event: 'SELL_WITHOUT_POSITION',
+              tradeRequestId: proposal.tradeRequestId,
+            },
             'Sell filled but no position was on record',
           );
+          return;
         }
+        // Close what actually sold (provider may report less than requested).
+        const qty = Math.min(tokens, held.quantity);
+        const closeResult = await this.deps.positions.close({
+          tokenMint: proposal.proposal.tokenMint,
+          tradeRequestId: proposal.tradeRequestId,
+          quantity: qty,
+          priceSol: sol / qty,
+          signature: outcome.txSignature,
+        });
+        await this.deps.pnl.addSol(closeResult.realizedPnlSol);
+        logger.info(
+          {
+            event: 'PNL_RECORDED',
+            tradeRequestId: proposal.tradeRequestId,
+            realizedSol: closeResult.realizedPnlSol,
+          },
+          'Realized PnL recorded',
+        );
       }
     } catch (err) {
       logger.error(
-        { event: 'LEDGER_RECONCILE_FAILED', tradeRequestId: proposal.tradeRequestId, err },
+        {
+          event: 'LEDGER_RECONCILE_FAILED',
+          tradeRequestId: proposal.tradeRequestId,
+          err,
+        },
         'Failed to reconcile position/PnL — gate will be stale until corrected',
       );
     }

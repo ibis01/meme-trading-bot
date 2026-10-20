@@ -17,7 +17,14 @@ export interface ExecutionRequest {
   tradeRequestId: string;
   tokenMint: string;
   side: 'BUY' | 'SELL';
+  /** SOL notional for BUY. For SELL this is informational (position notional). */
   amountSol: number;
+  /**
+   * SELL only: exact token quantity to sell, taken from the position ledger
+   * before submission. Providers must sell exactly this amount (up to
+   * on-chain reality reported back via filledTokenAmount).
+   */
+  tokenAmount?: number;
   maxSlippageBps: number;
   maxPriceImpactBps: number;
   quoteFetchedAt: number;
@@ -26,7 +33,15 @@ export interface ExecutionRequest {
 export interface ExecutionOutcome {
   /** Empty string is allowed only for FAILED (pre-submit failures). */
   txSignature: string;
+  /** SOL spent (BUY) or SOL received (SELL). Drives realized-PnL accounting. */
   filledAmountSol: number;
+  /**
+   * Token units received (BUY) or sold (SELL). REQUIRED (> 0) for CONFIRMED
+   * outcomes — the ledger books positions in token units, so a CONFIRMED fill
+   * without a token amount cannot be reconciled and is treated as an error.
+   * Use 0 for SUBMITTED / UNKNOWN / FAILED.
+   */
+  filledTokenAmount: number;
   filledPriceUsd: number;
   status: ExecutionStatus;
   error?: string;

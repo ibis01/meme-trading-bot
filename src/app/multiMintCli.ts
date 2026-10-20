@@ -1,13 +1,23 @@
 import fs from 'fs';
 import path from 'path';
-import { WalkForwardValidator, defaultWalkForwardConfig, defaultStops } from '../backtest/walkForward';
+import {
+  WalkForwardValidator,
+  defaultWalkForwardConfig,
+} from '../backtest/walkForward';
 import { selectSlippageModel } from '../backtest/slippageFactory';
 import { BirdeyeHistoryProvider } from '../data/birdeyeHistory';
 import { PostgresBarStore, linkNextPrices } from '../state/bars';
 import { resampleBars, INTERVAL_NAMES } from '../backtest/resample';
 import { MomentumStrategy, defaultMomentumConfig } from '../strategy/momentum';
-import { MeanReversionStrategy, defaultMeanReversionConfig } from '../strategy/meanReversion';
-import { AlwaysBuyStrategy, HoldNothingStrategy, SeededRandomStrategy } from '../strategy/baselines';
+import {
+  MeanReversionStrategy,
+  defaultMeanReversionConfig,
+} from '../strategy/meanReversion';
+import {
+  AlwaysBuyStrategy,
+  HoldNothingStrategy,
+  SeededRandomStrategy,
+} from '../strategy/baselines';
 import { Strategy } from '../strategy/types';
 import { BacktestResult, StopConfig } from '../backtest/types';
 import { stopsForInterval } from '../backtest/stopPresets';
@@ -53,7 +63,12 @@ interface Aggregate {
   exitReasons: Record<string, number>;
 }
 
-function parseArgs(): { mints: string[]; slippageMode: string | undefined; intervalMs: number; intervalName: string } {
+function parseArgs(): {
+  mints: string[];
+  slippageMode: string | undefined;
+  intervalMs: number;
+  intervalName: string;
+} {
   const args = process.argv.slice(2);
   const get = (k: string) => {
     const i = args.indexOf(`--${k}`);
@@ -62,21 +77,36 @@ function parseArgs(): { mints: string[]; slippageMode: string | undefined; inter
   const explicit = get('mints');
   const intervalName = get('interval') ?? '1m';
   const intervalMs = INTERVAL_NAMES[intervalName];
-  if (!intervalMs) throw new Error(`Unsupported --interval: ${intervalName}. Use 1m, 5m, 15m, 1h`);
+  if (!intervalMs)
+    throw new Error(
+      `Unsupported --interval: ${intervalName}. Use 1m, 5m, 15m, 1h`,
+    );
 
   if (explicit) {
     return {
-      mints: explicit.split(',').map((s) => s.trim()).filter(Boolean),
+      mints: explicit
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
       slippageMode: get('slippage') ?? process.env.SLIPPAGE_MODEL,
       intervalMs,
       intervalName,
     };
   }
   const file = path.resolve(process.cwd(), 'mints.txt');
-  if (!fs.existsSync(file)) throw new Error('mints.txt not found and --mints not provided');
-  const mints = fs.readFileSync(file, 'utf8')
-    .split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-  return { mints, slippageMode: process.env.SLIPPAGE_MODEL, intervalMs, intervalName };
+  if (!fs.existsSync(file))
+    throw new Error('mints.txt not found and --mints not provided');
+  const mints = fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+  return {
+    mints,
+    slippageMode: process.env.SLIPPAGE_MODEL,
+    intervalMs,
+    intervalName,
+  };
 }
 
 function summarise(r: BacktestResult): WindowSummary {
@@ -134,17 +164,31 @@ async function evaluateMint(
   store: PostgresBarStore,
 ): Promise<MintResult | null> {
   if (backfill && config.BIRDEYE_API_KEY) {
-    const provider = new BirdeyeHistoryProvider({ apiKey: config.BIRDEYE_API_KEY });
+    const provider = new BirdeyeHistoryProvider({
+      apiKey: config.BIRDEYE_API_KEY,
+    });
     const now = Date.now();
-    const bars = await provider.fetchBars(mint, now - LOOKBACK_MS, now, SOURCE_INTERVAL_MS);
+    const bars = await provider.fetchBars(
+      mint,
+      now - LOOKBACK_MS,
+      now,
+      SOURCE_INTERVAL_MS,
+    );
     if (bars.length > 0) await store.saveMany(bars);
   }
 
-  const raw = await store.get(mint, Date.now() - LOOKBACK_MS * 2, Date.now() + 60_000);
+  const raw = await store.get(
+    mint,
+    Date.now() - LOOKBACK_MS * 2,
+    Date.now() + 60_000,
+  );
   const working = resampleBars(raw, intervalMs, RECORDED_INTERVAL_MS);
   const linked = linkNextPrices(working, intervalMs * 3);
   if (linked.length < 100) {
-    logger.warn({ mint, bars: linked.length }, 'Skipping mint — insufficient bars');
+    logger.warn(
+      { mint, bars: linked.length },
+      'Skipping mint — insufficient bars',
+    );
     return null;
   }
 
@@ -203,7 +247,10 @@ function aggregate(results: MintResult[]): Aggregate[] {
     }
     out.push(agg);
   }
-  out.sort((a, b) => b.mintsPassed - a.mintsPassed || b.avgTestReturnPct - a.avgTestReturnPct);
+  out.sort(
+    (a, b) =>
+      b.mintsPassed - a.mintsPassed || b.avgTestReturnPct - a.avgTestReturnPct,
+  );
   return out;
 }
 
@@ -221,7 +268,13 @@ async function main() {
   const backfill = process.env.SKIP_BACKFILL !== '1';
   const effectiveStops = stopsForInterval(intervalMs);
   logger.info(
-    { mints: mints.length, backfill, slippageMode: slippageMode ?? 'constant', interval: intervalName, effectiveStops },
+    {
+      mints: mints.length,
+      backfill,
+      slippageMode: slippageMode ?? 'constant',
+      interval: intervalName,
+      effectiveStops,
+    },
     'Multi-mint evaluation starting',
   );
 
@@ -229,34 +282,46 @@ async function main() {
   const results: MintResult[] = [];
   for (const mint of mints) {
     try {
-      const r = await evaluateMint(mint, backfill, slippageMode, intervalMs, store);
+      const r = await evaluateMint(
+        mint,
+        backfill,
+        slippageMode,
+        intervalMs,
+        store,
+      );
       if (r) results.push(r);
     } catch (err) {
       logger.error({ mint, err }, 'Mint evaluation failed');
     }
   }
 
-  console.log(JSON.stringify({
-    mintsEvaluated: results.length,
-    slippageModel: slippageMode ?? 'constant',
-    interval: intervalName,
-    effectiveStops,
-    aggregates: aggregate(results),
-    perMint: results.map((r) => ({
-      mint: r.mint,
-      bars: r.bars,
-      strategies: r.strategies.map((s) => ({
-        name: s.name,
-        version: s.version,
-        passed: s.passed,
-        flags: s.flags,
-        testTrades: s.test.trades,
-        testReturnPct: s.test.returnPct,
-        testWinRate: s.test.winRate,
-        exitReasons: s.test.exitReasons,
-      })),
-    })),
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        mintsEvaluated: results.length,
+        slippageModel: slippageMode ?? 'constant',
+        interval: intervalName,
+        effectiveStops,
+        aggregates: aggregate(results),
+        perMint: results.map((r) => ({
+          mint: r.mint,
+          bars: r.bars,
+          strategies: r.strategies.map((s) => ({
+            name: s.name,
+            version: s.version,
+            passed: s.passed,
+            flags: s.flags,
+            testTrades: s.test.trades,
+            testReturnPct: s.test.returnPct,
+            testWinRate: s.test.winRate,
+            exitReasons: s.test.exitReasons,
+          })),
+        })),
+      },
+      null,
+      2,
+    ),
+  );
 
   await closePool();
 }

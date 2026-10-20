@@ -8,12 +8,18 @@ services:
   postgres:
     restart: unless-stopped
     image: postgres:16
+    # Audit fix M1: credentials from env (no hardcoded defaults committed),
+    # and ports bound to localhost only — never expose a dev DB/Redis to the
+    # network. Set POSTGRES_PASSWORD in your shell or a compose override.
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-      POSTGRES_DB: meme_bot
-    ports: ['5432:5432']
+      POSTGRES_USER: ${POSTGRES_USER:-meme_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
+      POSTGRES_DB: ${POSTGRES_DB:-meme_bot}
+    ports: ['127.0.0.1:5432:5432']
   redis:
     restart: unless-stopped
     image: redis:7
-    ports: ['6379:6379']
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    # No data persistence needed (kill switch + idempotency locks only);
+    # bound to localhost so it is unreachable off-host (audit fix M1).
+    ports: ['127.0.0.1:6379:6379']

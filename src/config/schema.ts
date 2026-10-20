@@ -3,7 +3,10 @@ import { z } from 'zod';
 export const envSchema = z.object({
   TRADING_MODE: z.enum(['paper', 'manual', 'live']).default('paper'),
 
-  SOLANA_RPC_URL: z.string().url().default('https://api.mainnet-beta.solana.com'),
+  SOLANA_RPC_URL: z
+    .string()
+    .url()
+    .default('https://api.mainnet-beta.solana.com'),
   DATABASE_URL: z.string().url().optional(),
   REDIS_URL: z.string().url().optional(),
   RUGCHECK_API_URL: z.string().url().default('https://api.rugcheck.xyz/v1'),
@@ -26,6 +29,16 @@ export const envSchema = z.object({
   MAX_TOP10_HOLDER_PERCENT: z.coerce.number().min(0).max(100).default(30),
   MAX_DEV_WALLET_PERCENT: z.coerce.number().min(0).max(100).default(5),
   MAX_QUOTE_AGE_MS: z.coerce.number().int().positive().default(5000),
+
+  // Exit monitor (audit fix H1)
+  EXIT_STOP_LOSS_PERCENT: z.coerce.number().min(0).default(30),
+  EXIT_TAKE_PROFIT_PERCENT: z.coerce.number().min(0).default(50),
+  EXIT_MAX_HOLD_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(2 * 60 * 60 * 1000),
+  EXIT_CHECK_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
 
   WALLET_PRIVATE_KEY: z.string().optional(),
 });

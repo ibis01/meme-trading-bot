@@ -18,6 +18,8 @@ export interface CommandContext {
     kind: 'BUY' | 'SELL';
     tokenMint: string;
     amountSol?: number;
+    /** SELL only: fraction of the position to close, in bps (10000 = full). */
+    sellPercentBps?: number;
   }) => Promise<{ ok: boolean; message: string }>;
   /** Optional: called on /closeall. Wired in Task 035. */
   onCloseAll?: (userId: number) => Promise<{ ok: boolean; message: string }>;
@@ -36,12 +38,15 @@ export const HELP_TEXT = [
   '/resume     — deactivate kill switch',
   '/emergency  — activate kill switch with EMERGENCY reason',
   '/buy <mint> <sol>  — propose a buy (requires confirmation)',
-  '/sell <mint>       — propose a sell (requires confirmation)',
+  '/sell <mint> [percent] — propose a sell, percent 1-100 (default 100, requires confirmation)',
   '/closeall          — close all open positions (requires typed confirmation)',
   '/help       — this message',
 ].join('\n');
 
-function requireAuth(ctx: CommandContext, command: string): CommandResult | null {
+function requireAuth(
+  ctx: CommandContext,
+  command: string,
+): CommandResult | null {
   const auth = ctx.authorizer.isAuthorized(ctx.userId);
   if (!auth.authorized) {
     audit('CMD_UNAUTHORIZED', { userId: ctx.userId, command });
@@ -53,14 +58,21 @@ function requireAuth(ctx: CommandContext, command: string): CommandResult | null
 async function requireTradingAllowed(
   ctx: CommandContext,
   command: string,
+  side: 'BUY' | 'SELL' = 'BUY',
 ): Promise<CommandResult | null> {
   const ks = await ctx.killSwitch.get();
-  if (ks.active) {
+  if (ks.active && side === 'BUY') {
     audit('CMD_BLOCKED_KILL_SWITCH', { userId: ctx.userId, command });
     return {
       ok: false,
       message: `🛑 Kill switch active (${ks.reason ?? 'unknown'}). Trade commands blocked.`,
     };
+  }
+  if (ks.active && side === 'SELL') {
+    // Exits are risk-REDUCING: they stay available while the kill switch is
+    // active (audit fix C2). Otherwise /emergency would trap open positions
+    // with no way to flatten. The executor + risk engine apply the same rule.
+    audit('CMD_SELL_UNDER_KILL_SWITCH', { userId: ctx.userId, command });
   }
   return null;
 }
@@ -72,7 +84,9 @@ export async function handleHelp(ctx: CommandContext): Promise<CommandResult> {
   return { ok: true, message: HELP_TEXT };
 }
 
-export async function handleStatus(ctx: CommandContext): Promise<CommandResult> {
+export async function handleStatus(
+  ctx: CommandContext,
+): Promise<CommandResult> {
   const denied = requireAuth(ctx, 'status');
   if (denied) return denied;
   const state = await ctx.killSwitch.get();
@@ -93,7 +107,9 @@ export async function handlePause(ctx: CommandContext): Promise<CommandResult> {
   return { ok: true, message: '🛑 Kill switch ACTIVE.' };
 }
 
-export async function handleResume(ctx: CommandContext): Promise<CommandResult> {
+export async function handleResume(
+  ctx: CommandContext,
+): Promise<CommandResult> {
   const denied = requireAuth(ctx, 'resume');
   if (denied) return denied;
   await ctx.killSwitch.deactivate(String(ctx.userId));
@@ -101,7 +117,9 @@ export async function handleResume(ctx: CommandContext): Promise<CommandResult> 
   return { ok: true, message: '✅ Kill switch DEACTIVATED.' };
 }
 
-export async function handleEmergency(ctx: CommandContext): Promise<CommandResult> {
+export async function handleEmergency(
+  ctx: CommandContext,
+): Promise<CommandResult> {
   const denied = requireAuth(ctx, 'emergency');
   if (denied) return denied;
   await ctx.killSwitch.activate('EMERGENCY', String(ctx.userId));
@@ -111,7 +129,9 @@ export async function handleEmergency(ctx: CommandContext): Promise<CommandResul
 
 // --- New: positions ---
 
-export async function handlePositions(ctx: CommandContext): Promise<CommandResult> {
+export async function handlePositions(
+  ctx: CommandContext,
+): Promise<CommandResult> {
   const denied = requireAuth(ctx, 'positions');
   if (denied) return denied;
   const count = await ctx.positions.getOpenCount();
@@ -121,7 +141,10 @@ export async function handlePositions(ctx: CommandContext): Promise<CommandResul
 
 // --- New: buy (two-step) ---
 
-export async function handleBuy(ctx: CommandContext, args: string[]): Promise<CommandResult> {
+export async function handleBuy(
+  ctx: CommandContext,
+  args: string[],
+): Promise<CommandResult> {
   const denied = requireAuth(ctx, 'buy');
   if (denied) return denied;
   const ksDenied = await requireTradingAllowed(ctx, 'buy');
@@ -150,29 +173,56 @@ export async function handleBuy(ctx: CommandContext, args: string[]): Promise<Co
   };
 }
 
-export async function handleSell(ctx: CommandContext, args: string[]): Promise<CommandResult> {
+export async function handleSell(
+  ctx: CommandContext,
+  args: string[],
+): Promise<CommandResult> {
   const denied = requireAuth(ctx, 'sell');
   if (denied) return denied;
-  const ksDenied = await requireTradingAllowed(ctx, 'sell');
+  const ksDenied = await requireTradingAllowed(ctx, 'sell', 'SELL');
   if (ksDenied) return ksDenied;
 
-  if (args.length !== 1) {
-    return { ok: false, message: 'Usage: /sell <mint>' };
+  if (args.length < 1 || args.length > 2) {
+    return { ok: false, message: 'Usage: /sell <mint> [percent 1-100]' };
   }
-  const [tokenMint] = args;
+  const [tokenMint, percentStr] = args;
+
+  // Partial close support (audit fix M7): percent of the held position,
+  // in basis points. Default = full close (10000 bps).
+  let sellPercentBps = 10_000;
+  if (percentStr !== undefined) {
+    const pct = Number(percentStr.replace('%', ''));
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+      return {
+        ok: false,
+        message: 'percent must be a number between 1 and 100.',
+      };
+    }
+    sellPercentBps = Math.round(pct * 100);
+  }
+
   const required = 'confirm';
-  ctx.confirmations.register(ctx.userId!, 'SELL', { tokenMint }, required);
-  audit('CMD_SELL_PENDING', { userId: ctx.userId, tokenMint });
+  ctx.confirmations.register(
+    ctx.userId!,
+    'SELL',
+    { tokenMint, sellPercentBps },
+    required,
+  );
+  audit('CMD_SELL_PENDING', { userId: ctx.userId, tokenMint, sellPercentBps });
+  const pctLabel =
+    sellPercentBps === 10_000 ? '100' : String(sellPercentBps / 100);
   return {
     ok: true,
-    message: `📝 Sell request prepared:\n  mint: ${tokenMint}\n\nReply exactly "confirm" within 60s to execute.`,
+    message: `📝 Sell request prepared:\n  mint: ${tokenMint}\n  percent: ${pctLabel}%\n\nReply exactly "confirm" within 60s to execute.`,
   };
 }
 
-export async function handleCloseAll(ctx: CommandContext): Promise<CommandResult> {
+export async function handleCloseAll(
+  ctx: CommandContext,
+): Promise<CommandResult> {
   const denied = requireAuth(ctx, 'closeall');
   if (denied) return denied;
-  const ksDenied = await requireTradingAllowed(ctx, 'closeall');
+  const ksDenied = await requireTradingAllowed(ctx, 'closeall', 'SELL');
   if (ksDenied) return ksDenied;
 
   const required = 'CONFIRM CLOSE ALL';
@@ -202,6 +252,18 @@ export async function handleConfirmationText(
     );
     if (!consumed) continue;
 
+    // Audit fix M5: the kill switch was checked when the proposal was
+    // registered — re-check at EXECUTION time too, or a pause issued between
+    // /buy and "confirm" would be silently bypassed at this layer.
+    // Side-aware (C2): BUYs are blocked under the kill switch, SELLs are
+    // allowed (exits reduce risk).
+    const ksDenied = await requireTradingAllowed(
+      ctx,
+      kind.toLowerCase(),
+      kind === 'BUY' ? 'BUY' : 'SELL',
+    );
+    if (ksDenied) return ksDenied;
+
     if (kind === 'CLOSE_ALL') {
       if (!ctx.onCloseAll) {
         return { ok: false, message: 'Close-all handler not wired yet.' };
@@ -215,17 +277,23 @@ export async function handleConfirmationText(
       if (!ctx.onTradeRequest) {
         return { ok: false, message: 'Trade handler not wired yet.' };
       }
-      const payload = consumed.payload as { tokenMint: string; amountSol?: number };
+      const payload = consumed.payload as {
+        tokenMint: string;
+        amountSol?: number;
+        sellPercentBps?: number;
+      };
       const result = await ctx.onTradeRequest({
         userId: ctx.userId,
         kind,
         tokenMint: payload.tokenMint,
         amountSol: payload.amountSol,
+        sellPercentBps: payload.sellPercentBps,
       });
       audit(`CMD_${kind}_EXECUTED`, {
         userId: ctx.userId,
         ok: result.ok,
         tokenMint: payload.tokenMint,
+        sellPercentBps: payload.sellPercentBps,
       });
       return result;
     }
