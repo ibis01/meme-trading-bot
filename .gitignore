@@ -51,4 +51,4 @@ test_*.ts
 candidates.txt
 mints.old.txt
 pumpswap-create.json
-pumpfun-bonding.json
+pumpfun-bonding.json*.bak
