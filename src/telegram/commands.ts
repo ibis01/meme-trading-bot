@@ -69,15 +69,10 @@ async function requireTradingAllowed(
     };
   }
   if (ks.active && side === 'SELL') {
-    // Exits are risk-REDUCING: they stay available while the kill switch is
-    // active (audit fix C2). Otherwise /emergency would trap open positions
-    // with no way to flatten. The executor + risk engine apply the same rule.
     audit('CMD_SELL_UNDER_KILL_SWITCH', { userId: ctx.userId, command });
   }
   return null;
 }
-
-// --- Existing commands ---
 
 export async function handleHelp(ctx: CommandContext): Promise<CommandResult> {
   audit('CMD_HELP', { userId: ctx.userId });
@@ -127,19 +122,36 @@ export async function handleEmergency(
   return { ok: true, message: '🚨 EMERGENCY MODE ACTIVE.' };
 }
 
-// --- New: positions ---
-
+// --- UPDATED: List actual positions ---
 export async function handlePositions(
   ctx: CommandContext,
 ): Promise<CommandResult> {
   const denied = requireAuth(ctx, 'positions');
   if (denied) return denied;
-  const count = await ctx.positions.getOpenCount();
-  audit('CMD_POSITIONS', { userId: ctx.userId, count });
-  return { ok: true, message: `📊 Open positions: ${count}` };
-}
 
-// --- New: buy (two-step) ---
+  // Fetch the full list instead of just the count
+  const openPositions = await ctx.positions.list();
+  const count = openPositions.length;
+  audit('CMD_POSITIONS', { userId: ctx.userId, count });
+
+  if (count === 0) {
+    return { ok: true, message: `📊 No open positions.` };
+  }
+
+  let message = `📊 Open positions (${count}):\n\n`;
+
+  for (const pos of openPositions) {
+    const mintStr = `${pos.tokenMint.slice(0, 4)}...${pos.tokenMint.slice(-4)}`;
+    const qtyStr = Number(pos.quantity).toFixed(4);
+    const costStr = Number(pos.avgCostSol).toFixed(6);
+
+    message += `🪙 ${mintStr}\n`;
+    message += `   Qty: ${qtyStr}\n`;
+    message += `   Avg Cost: ${costStr} SOL\n\n`;
+  }
+
+  return { ok: true, message: message.trim() };
+}
 
 export async function handleBuy(
   ctx: CommandContext,
@@ -187,8 +199,6 @@ export async function handleSell(
   }
   const [tokenMint, percentStr] = args;
 
-  // Partial close support (audit fix M7): percent of the held position,
-  // in basis points. Default = full close (10000 bps).
   let sellPercentBps = 10_000;
   if (percentStr !== undefined) {
     const pct = Number(percentStr.replace('%', ''));
@@ -234,8 +244,6 @@ export async function handleCloseAll(
   };
 }
 
-// --- Confirmation handler for free-text messages ---
-
 export async function handleConfirmationText(
   ctx: CommandContext,
   text: string,
@@ -243,7 +251,6 @@ export async function handleConfirmationText(
   if (!ctx.userId) return null;
   const trimmed = text.trim();
 
-  // Check each kind in order of specificity: CLOSE_ALL first (longest required text).
   for (const kind of ['CLOSE_ALL', 'SELL', 'BUY'] as const) {
     const consumed = ctx.confirmations.consume<Record<string, unknown>>(
       ctx.userId,
@@ -252,11 +259,6 @@ export async function handleConfirmationText(
     );
     if (!consumed) continue;
 
-    // Audit fix M5: the kill switch was checked when the proposal was
-    // registered — re-check at EXECUTION time too, or a pause issued between
-    // /buy and "confirm" would be silently bypassed at this layer.
-    // Side-aware (C2): BUYs are blocked under the kill switch, SELLs are
-    // allowed (exits reduce risk).
     const ksDenied = await requireTradingAllowed(
       ctx,
       kind.toLowerCase(),

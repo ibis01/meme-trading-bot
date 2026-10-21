@@ -6,11 +6,6 @@ export interface PriceOracle {
   getPriceUsd(tokenMint: string): Promise<number>;
 }
 
-/**
- * Oracle that also knows the SOL/USD price. Optional so existing simple
- * oracles (and test mocks) keep working; the paper provider falls back to
- * `defaultSolPriceUsd` when the oracle cannot supply a live SOL price.
- */
 export interface SolAwarePriceOracle extends PriceOracle {
   getSolPriceUsd?(): Promise<number>;
 }
@@ -29,17 +24,6 @@ export class StaticPriceOracle implements SolAwarePriceOracle {
   }
 }
 
-/**
- * Paper provider: simulates fills against an in-memory paper wallet.
- * Never touches the network.
- *
- * Token accounting (audit fix C1):
- *   BUY  — tokens = amountSol / priceSolPerToken, credited to the wallet.
- *   SELL — sells min(requested tokenAmount, wallet balance) at the current
- *          price and reports the actual SOL proceeds, so the executor can
- *          book real realized PnL instead of a constant zero.
- * Generates a fake signature so downstream code can behave as if live.
- */
 export class PaperExecutionProvider implements ExecutionProvider {
   readonly name = 'paper';
   private readonly balances = new Map<string, number>();
@@ -50,13 +34,11 @@ export class PaperExecutionProvider implements ExecutionProvider {
     // Paper is always allowed.
   }
 
-  /** Test/observability hook: current paper wallet balance for a mint. */
   paperBalance(tokenMint: string): number {
     return this.balances.get(tokenMint) ?? 0;
   }
 
   async execute(req: ExecutionRequest): Promise<ExecutionOutcome> {
-    // Simulate: filled at oracle price, no partial fills, zero slippage.
     const priceUsd = await this.oracle.getPriceUsd(req.tokenMint);
     if (!priceUsd || priceUsd <= 0) {
       return {
@@ -97,24 +79,28 @@ export class PaperExecutionProvider implements ExecutionProvider {
       };
     }
 
-    // SELL: sell the requested quantity (or the whole wallet balance when the
-    // executor did not pre-compute one), capped at what we actually hold.
+    // SELL: Trust the database. If we reached this point, the orchestrator
+    // and DB already confirmed we own the tokens. We do not need to strictly
+    // enforce the in-memory balance, which resets on bot restarts.
     const held = this.balances.get(req.tokenMint) ?? 0;
-    const requested = req.tokenAmount ?? held;
-    const tokensToSell = Math.min(requested, held);
-    if (!(tokensToSell > 0)) {
+    const tokensToSell = req.tokenAmount ?? held;
+
+    if (tokensToSell <= 0) {
       return {
         txSignature: `paper_fail_${randomUUID()}`,
         filledAmountSol: 0,
         filledTokenAmount: 0,
         filledPriceUsd: priceUsd,
         status: 'FAILED',
-        error: 'NO_PAPER_TOKEN_BALANCE',
+        error: 'INVALID_SELL_AMOUNT',
       };
     }
 
     const proceedsSol = tokensToSell * priceSolPerToken;
-    this.balances.set(req.tokenMint, held - tokensToSell);
+
+    // Update memory, but clamp to 0 to avoid negative numbers
+    this.balances.set(req.tokenMint, Math.max(0, held - tokensToSell));
+
     return {
       txSignature: `paper_${randomUUID()}`,
       filledAmountSol: proceedsSol,
