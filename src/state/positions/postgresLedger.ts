@@ -96,8 +96,8 @@ export class PostgresPositionLedger implements PositionLedger {
       const realizedPnlSol = proceedsSol - costBasisSol;
       const remainingQuantity = existing.quantity - input.quantity;
 
-      // THE FIX: Soft delete. Update the quantity to 0 and set closed_at.
-      // Do NOT use DELETE, or Postgres will throw a Foreign Key error.
+      // THE REAL FIX: Soft delete. Update quantity to 0, do not DELETE.
+      // This avoids violating the foreign key constraint on position_fills.
       await client.query(
         `UPDATE positions
            SET quantity = $1, updated_at = NOW(),
@@ -131,6 +131,7 @@ export class PostgresPositionLedger implements PositionLedger {
   }
 
   async get(tokenMint: string): Promise<Position | null> {
+    // Added AND quantity > 0 to prevent returning fully closed positions.
     const r = await this.pool.query<PositionRow>(
       'SELECT * FROM positions WHERE token_mint = $1 AND quantity > 0',
       [tokenMint],
