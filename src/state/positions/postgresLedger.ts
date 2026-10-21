@@ -96,14 +96,14 @@ export class PostgresPositionLedger implements PositionLedger {
       const realizedPnlSol = proceedsSol - costBasisSol;
       const remainingQuantity = existing.quantity - input.quantity;
 
-      // THE REAL FIX: Soft delete. Update quantity to 0, do not DELETE.
-      // This avoids violating the foreign key constraint on position_fills.
+      // THE FIX: Calculate closedAt in Node.js to avoid Postgres type conflicts.
+      const closedAt = remainingQuantity === 0 ? new Date() : null;
+
       await client.query(
         `UPDATE positions
-           SET quantity = $1, updated_at = NOW(),
-               closed_at = CASE WHEN $1 = 0 THEN NOW() ELSE NULL END
-         WHERE id = $2`,
-        [remainingQuantity, existing.id],
+           SET quantity = $1, updated_at = NOW(), closed_at = $2
+         WHERE id = $3`,
+        [remainingQuantity, closedAt, existing.id],
       );
 
       await client.query(
