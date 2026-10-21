@@ -96,20 +96,15 @@ export class PostgresPositionLedger implements PositionLedger {
       const realizedPnlSol = proceedsSol - costBasisSol;
       const remainingQuantity = existing.quantity - input.quantity;
 
-      if (remainingQuantity === 0) {
-        // THE FIX: If the position is fully closed, we must DELETE the row.
-        // Updating quantity to 0 will fail the "CHECK (quantity > 0)" DB constraint.
-        await client.query('DELETE FROM positions WHERE id = $1', [
-          existing.id,
-        ]);
-      } else {
-        await client.query(
-          `UPDATE positions
-             SET quantity = $1, updated_at = NOW()
-           WHERE id = $2`,
-          [remainingQuantity, existing.id],
-        );
-      }
+      // THE FIX: Soft delete. Update the quantity to 0 and set closed_at.
+      // Do NOT use DELETE, or Postgres will throw a Foreign Key error.
+      await client.query(
+        `UPDATE positions
+           SET quantity = $1, updated_at = NOW(),
+               closed_at = CASE WHEN $1 = 0 THEN NOW() ELSE NULL END
+         WHERE id = $2`,
+        [remainingQuantity, existing.id],
+      );
 
       await client.query(
         `INSERT INTO position_fills
@@ -137,7 +132,7 @@ export class PostgresPositionLedger implements PositionLedger {
 
   async get(tokenMint: string): Promise<Position | null> {
     const r = await this.pool.query<PositionRow>(
-      'SELECT * FROM positions WHERE token_mint = $1',
+      'SELECT * FROM positions WHERE token_mint = $1 AND quantity > 0',
       [tokenMint],
     );
     return r.rows.length ? rowToPosition(r.rows[0]) : null;
