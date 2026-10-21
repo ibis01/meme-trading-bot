@@ -4,6 +4,10 @@ import { RiskEngine } from '../risk/engine';
 import { ProposalOrchestrator } from '../orchestrator/orchestrator';
 import { TradeExecutor } from '../execution/executor';
 import { PaperExecutionProvider, StaticPriceOracle } from '../execution/paper';
+import {
+  PostgresRejectionStore,
+  RejectionStore,
+} from '../state/proposalRejections';
 import { LiveExecutionProvider } from '../execution/live';
 import { MockSecurityProvider } from '../security';
 import { RugCheckProvider } from '../security/rugcheck';
@@ -80,8 +84,6 @@ function selectSecurityProvider(): SecurityProvider {
 
 export function buildProductionApp(): ProductionApp {
   const redis = getRedis();
-  // Audit fix M4: reads fail closed (and stay legible) during a Redis outage
-  // instead of throwing opaque errors from every trade path.
   const killSwitch: KillSwitchStore = new ResilientKillSwitch(
     new RedisKillSwitch(redis as never),
     (err) =>
@@ -108,6 +110,7 @@ export function buildProductionApp(): ProductionApp {
   let executions: ExecutionStore;
   let signals: SignalStore;
   let verdicts: StrategyVerdictStore;
+  let rejectionStore: RejectionStore | undefined;
 
   if (config.DATABASE_URL) {
     const pool = getPool();
@@ -118,6 +121,9 @@ export function buildProductionApp(): ProductionApp {
     executions = new PostgresExecutionStore(pool);
     signals = new PostgresSignalStore(pool);
     verdicts = new PostgresStrategyVerdictStore(pool);
+
+    // Initialize rejectionStore here where `pool` is in scope
+    rejectionStore = new PostgresRejectionStore(pool);
   } else {
     storeBackend = 'memory';
     logger.warn('DATABASE_URL not set — using in-memory stores.');
@@ -127,18 +133,26 @@ export function buildProductionApp(): ProductionApp {
     executions = new InMemoryExecutionStore();
     signals = new InMemorySignalStore();
     verdicts = new InMemoryStrategyVerdictStore();
+    // rejectionStore remains undefined in memory mode
   }
 
-  // Rule 17: the gate is only active in live mode. Paper mode is unconstrained.
-  // Audit fix H1: the exit monitor's strategy is always allowed — exits must
-  // never wait on an approvals row (that would recreate failure mode C2).
-  const strategyGate = new StrategyGate(
-    verdicts,
-    config.TRADING_MODE === 'live',
-    [EXIT_MONITOR_STRATEGY],
-  );
+  // Gate is active in live mode OR when the env var explicitly enables it.
+  const strategyGateEnabled =
+    config.TRADING_MODE === 'live' ||
+    process.env.STRATEGY_GATE_ENABLED === 'true';
+
+  const strategyGate = new StrategyGate(verdicts, strategyGateEnabled, [
+    EXIT_MONITOR_STRATEGY,
+  ]);
+
+  // Re-added provider which was missing in the paste
+  const provider: ExecutionProvider =
+    config.TRADING_MODE === 'live'
+      ? new LiveExecutionProvider()
+      : new PaperExecutionProvider(new StaticPriceOracle({}));
 
   const riskEngine = new RiskEngine({ killSwitch, pnl, positions });
+
   const orchestrator = new ProposalOrchestrator({
     riskEngine,
     security,
@@ -146,12 +160,8 @@ export function buildProductionApp(): ProductionApp {
     proposals,
     signals,
     strategyGate,
+    rejectionStore, // Now properly passed
   });
-
-  const provider: ExecutionProvider =
-    config.TRADING_MODE === 'live'
-      ? new LiveExecutionProvider()
-      : new PaperExecutionProvider(new StaticPriceOracle({}));
 
   const executor = new TradeExecutor({
     riskEngine,
@@ -171,9 +181,7 @@ export function buildProductionApp(): ProductionApp {
       security: security.name,
       market: market?.name ?? 'none',
       executor: provider.name,
-      strategyGateEnabled:
-        config.TRADING_MODE === 'live' ||
-        process.env.STRATEGY_GATE_ENABLED === 'true',
+      strategyGateEnabled, // Used the variable to ensure log matches actual state
     },
     'Production app assembled',
   );
