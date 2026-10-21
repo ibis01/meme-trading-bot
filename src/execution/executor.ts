@@ -58,7 +58,6 @@ export class TradeExecutor {
         proposal.tradeRequestId,
       );
       if (existing) {
-        // Re-route to the correct result kind based on the persisted status.
         if (existing.status === 'CONFIRMED')
           return { kind: 'CONFIRMED', execution: existing };
         if (existing.status === 'SUBMITTED')
@@ -70,14 +69,10 @@ export class TradeExecutor {
       return { kind: 'FAILED', reason: 'DUPLICATE_IN_FLIGHT' };
     }
 
-    // Anything from here until `submitStarted = true` is pre-submit and safe
-    // to release the lock on rejection.
     let submitStarted = false;
 
     try {
-      // Stage 3: kill switch recheck (Rule 14) — side-aware (audit fix C2):
-      // the switch blocks new risk (BUYs); SELLs stay available so /pause or
-      // /emergency can never trap open positions with no way to flatten.
+      // Stage 3: kill switch recheck (Rule 14) — side-aware
       if (proposal.proposal.side === 'BUY') {
         const ks = await this.deps.killSwitch.get();
         if (ks.active) {
@@ -96,7 +91,7 @@ export class TradeExecutor {
         }
       }
 
-      // Stage 4: risk re-evaluation (catches stale quotes)
+      // Stage 4: risk re-evaluation
       const fresh = await this.deps.riskEngine.evaluate(proposal.proposal);
       if (!fresh.allowed) {
         await this.deps.idempotency.release(
@@ -113,10 +108,7 @@ export class TradeExecutor {
         return { kind: 'REJECTED', reason: fresh.reason ?? 'RISK_REJECTED' };
       }
 
-      // Stage 4.5 (SELL): resolve the position BEFORE submission so the
-      // provider knows the exact token quantity to sell. Failing here is a
-      // pre-submit rejection (safe to retry later, unlike a fill with no
-      // position on record).
+      // Stage 4.5 (SELL): resolve the position BEFORE submission
       let sellTokenAmount: number | undefined;
       if (proposal.proposal.side === 'SELL') {
         const held = await this.deps.positions.get(proposal.proposal.tokenMint);
@@ -139,12 +131,8 @@ export class TradeExecutor {
           held.quantity * (Math.min(Math.max(pct, 1), 10_000) / 10_000);
       }
 
-      // Stage 5: provider safety gate (Rule 34)
+      // Stage 5: provider safety gate
       this.deps.provider.assertEnabled();
-
-      // === POINT OF NO RETURN ===
-      // From this line onward we DO NOT release the idempotency lock, even on
-      // rejection, because a submission attempt may have reached the network.
       submitStarted = true;
 
       // Stage 6: SUBMIT
@@ -170,7 +158,6 @@ export class TradeExecutor {
         executedAt: Date.now(),
       };
 
-      // Duplicate signature guard (Rule 24)
       if (outcome.txSignature) {
         const clash = await this.deps.executions.getBySignature(
           outcome.txSignature,
@@ -184,7 +171,6 @@ export class TradeExecutor {
             },
             'Duplicate tx signature — refusing to persist',
           );
-          // Keep the lock: this submission reached the network and produced a signature.
           return { kind: 'FAILED', reason: 'DUPLICATE_TX_SIGNATURE' };
         }
       }
@@ -232,7 +218,6 @@ export class TradeExecutor {
         return { kind: 'UNKNOWN', execution: stored };
       }
 
-      // FAILED: provider is confident the tx did not land.
       await this.deps.proposals.updateStatus(proposal.id, 'FAILED');
       logger.error(
         {
@@ -242,13 +227,11 @@ export class TradeExecutor {
         },
         'Execution failed at provider',
       );
-      // Keep the lock — a tx with this signature could still exist.
       return { kind: 'FAILED', reason: outcome.error ?? 'PROVIDER_FAILED' };
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'UNKNOWN';
 
       if (!submitStarted) {
-        // Pre-submit exception: safe to release the lock.
         await this.deps.idempotency.release(
           this.execKey(proposal.tradeRequestId),
         );
@@ -263,7 +246,6 @@ export class TradeExecutor {
         return { kind: 'FAILED', reason };
       }
 
-      // Post-submit exception: NEVER release. Record as UNKNOWN for reconciliation.
       logger.error(
         {
           event: 'EXECUTION_ERROR_POST_SUBMIT',
@@ -298,17 +280,6 @@ export class TradeExecutor {
     }
   }
 
-  /**
-   * Reconciles a CONFIRMED fill with the position ledger.
-   *
-   * Token-unit model (audit fix C1):
-   *   BUY  — quantity = tokens received, priceSol = SOL spent per token.
-   *   SELL — quantity = tokens sold,      priceSol = SOL received per token.
-   * realizedPnlSol = proceeds − qty × avgCostSol is then a REAL number, and
-   * the daily-loss gate can actually fire. A CONFIRMED fill without a usable
-   * token amount is treated as a reconciliation failure and never silently
-   * booked as zero PnL.
-   */
   private async bookConfirmedFill(
     proposal: StoredProposal,
     outcome: {
@@ -346,7 +317,6 @@ export class TradeExecutor {
           );
           return;
         }
-        // Close what actually sold (provider may report less than requested).
         const qty = Math.min(tokens, held.quantity);
         const closeResult = await this.deps.positions.close({
           tokenMint: proposal.proposal.tokenMint,

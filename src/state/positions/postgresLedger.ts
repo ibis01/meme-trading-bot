@@ -9,10 +9,6 @@ import {
   PositionLedger,
 } from './types';
 
-/**
- * Rule 24: open/close are transactional. We lock the position row FOR UPDATE
- * so two concurrent fills cannot race on the average-cost computation.
- */
 export class PostgresPositionLedger implements PositionLedger {
   constructor(private readonly pool: Pool) {}
 
@@ -40,7 +36,10 @@ export class PostgresPositionLedger implements PositionLedger {
       } else {
         const existing = rowToPosition(row.rows[0]);
         const newQty = existing.quantity + input.quantity;
-        const newAvg = (existing.quantity * existing.avgCostSol + input.quantity * input.priceSol) / newQty;
+        const newAvg =
+          (existing.quantity * existing.avgCostSol +
+            input.quantity * input.priceSol) /
+          newQty;
         const updatedRow = await client.query<PositionRow>(
           `UPDATE positions
              SET quantity = $1, avg_cost_sol = $2, updated_at = NOW(), closed_at = NULL
@@ -55,7 +54,14 @@ export class PostgresPositionLedger implements PositionLedger {
         `INSERT INTO position_fills
            (position_id, trade_request_id, side, quantity, price_sol, total_sol, signature)
          VALUES ($1, $2, 'BUY', $3, $4, $5, $6)`,
-        [updated.id, input.tradeRequestId, input.quantity, input.priceSol, input.quantity * input.priceSol, input.signature],
+        [
+          updated.id,
+          input.tradeRequestId,
+          input.quantity,
+          input.priceSol,
+          input.quantity * input.priceSol,
+          input.signature,
+        ],
       );
 
       await client.query('COMMIT');
@@ -82,26 +88,41 @@ export class PostgresPositionLedger implements PositionLedger {
       if (row.rows.length === 0) throw new Error('NO_OPEN_POSITION');
       const existing = rowToPosition(row.rows[0]);
       if (existing.quantity <= 0) throw new Error('NO_OPEN_POSITION');
-      if (input.quantity > existing.quantity) throw new Error('INSUFFICIENT_QUANTITY');
+      if (input.quantity > existing.quantity)
+        throw new Error('INSUFFICIENT_QUANTITY');
 
       const costBasisSol = input.quantity * existing.avgCostSol;
       const proceedsSol = input.quantity * input.priceSol;
       const realizedPnlSol = proceedsSol - costBasisSol;
       const remainingQuantity = existing.quantity - input.quantity;
 
-      await client.query(
-        `UPDATE positions
-           SET quantity = $1, updated_at = NOW(),
-               closed_at = CASE WHEN $1 = 0 THEN NOW() ELSE NULL END
-         WHERE id = $2`,
-        [remainingQuantity, existing.id],
-      );
+      if (remainingQuantity === 0) {
+        // THE FIX: If the position is fully closed, we must DELETE the row.
+        // Updating quantity to 0 will fail the "CHECK (quantity > 0)" DB constraint.
+        await client.query('DELETE FROM positions WHERE id = $1', [
+          existing.id,
+        ]);
+      } else {
+        await client.query(
+          `UPDATE positions
+             SET quantity = $1, updated_at = NOW()
+           WHERE id = $2`,
+          [remainingQuantity, existing.id],
+        );
+      }
 
       await client.query(
         `INSERT INTO position_fills
            (position_id, trade_request_id, side, quantity, price_sol, total_sol, signature)
          VALUES ($1, $2, 'SELL', $3, $4, $5, $6)`,
-        [existing.id, input.tradeRequestId, input.quantity, input.priceSol, input.quantity * input.priceSol, input.signature],
+        [
+          existing.id,
+          input.tradeRequestId,
+          input.quantity,
+          input.priceSol,
+          input.quantity * input.priceSol,
+          input.signature,
+        ],
       );
 
       await client.query('COMMIT');
@@ -115,17 +136,24 @@ export class PostgresPositionLedger implements PositionLedger {
   }
 
   async get(tokenMint: string): Promise<Position | null> {
-    const r = await this.pool.query<PositionRow>('SELECT * FROM positions WHERE token_mint = $1', [tokenMint]);
+    const r = await this.pool.query<PositionRow>(
+      'SELECT * FROM positions WHERE token_mint = $1',
+      [tokenMint],
+    );
     return r.rows.length ? rowToPosition(r.rows[0]) : null;
   }
 
   async list(): Promise<Position[]> {
-    const r = await this.pool.query<PositionRow>('SELECT * FROM positions WHERE quantity > 0 ORDER BY opened_at ASC');
+    const r = await this.pool.query<PositionRow>(
+      'SELECT * FROM positions WHERE quantity > 0 ORDER BY opened_at ASC',
+    );
     return r.rows.map(rowToPosition);
   }
 
   async getOpenCount(): Promise<number> {
-    const r = await this.pool.query<{ c: string }>('SELECT COUNT(*)::text AS c FROM positions WHERE quantity > 0');
+    const r = await this.pool.query<{ c: string }>(
+      'SELECT COUNT(*)::text AS c FROM positions WHERE quantity > 0',
+    );
     return Number(r.rows[0].c);
   }
 
