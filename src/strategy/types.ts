@@ -31,6 +31,7 @@ export interface SignalEvidence {
 }
 
 export interface Signal {
+  isShadow?: boolean; // <-- Added for shadow mode
   id: string;
   tokenMint: string;
   strategy: string;

@@ -21,6 +21,8 @@ export interface TradeProposal {
   /** SELL only: fraction of the position to close, in bps (10000 = full). */
   sellPercentBps?: number;
   security: TokenSecurityEvidence;
+
+  isShadow?: boolean;
 }
 
 /**

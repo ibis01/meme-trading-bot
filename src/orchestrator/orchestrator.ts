@@ -17,6 +17,17 @@ export interface OrchestratorDeps {
   signals: SignalStore;
   strategyGate?: StrategyGate;
   namespace?: string;
+  /** Optional: persist rejections to a dedicated audit table. */
+  rejectionStore?: {
+    saveRejection(input: {
+      tradeRequestId: string;
+      tokenMint: string;
+      strategy: string;
+      strategyVersion: string;
+      reasonCode: string;
+      evidence: Record<string, unknown>;
+    }): Promise<void>;
+  };
 }
 
 export type OrchestratorResult =
@@ -47,6 +58,17 @@ export class ProposalOrchestrator {
           { event: 'STRATEGY_GATE_BLOCKED', tradeRequestId, reason },
           'Strategy gate rejected signal',
         );
+        // Persist rejection evidence for auditability.
+        if (this.deps.rejectionStore) {
+          await this.deps.rejectionStore.saveRejection({
+            tradeRequestId,
+            tokenMint: signal.tokenMint,
+            strategy: signal.strategy,
+            strategyVersion: signal.strategyVersion,
+            reasonCode: reason,
+            evidence: { stage: 'STRATEGY_GATE', signal },
+          });
+        }
         return { kind: 'ERROR', reason };
       }
     }
@@ -87,6 +109,18 @@ export class ProposalOrchestrator {
       };
 
       await this.deps.proposals.save(stored);
+
+      // Persist rejection evidence for auditability.
+      if (!decision.allowed && this.deps.rejectionStore) {
+        await this.deps.rejectionStore.saveRejection({
+          tradeRequestId,
+          tokenMint: signal.tokenMint,
+          strategy: signal.strategy,
+          strategyVersion: signal.strategyVersion,
+          reasonCode: decision.reason ?? 'UNKNOWN_REJECTION',
+          evidence: decision.evidence ?? {},
+        });
+      }
 
       logger.info(
         {

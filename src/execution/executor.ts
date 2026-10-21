@@ -28,11 +28,6 @@ export type ExecuteResult =
   | { kind: 'DUPLICATE'; execution: StoredExecution }
   | { kind: 'FAILED'; reason: string };
 
-/**
- * Rule 11: executor honors a four-state submission model.
- * Rule 24: pre-submit failures release the idempotency lock (safe to retry).
- *          post-submit failures NEVER release the lock (retry could double-submit).
- */
 export class TradeExecutor {
   constructor(private readonly deps: TradeExecutorDeps) {}
 
@@ -41,7 +36,29 @@ export class TradeExecutor {
   }
 
   async execute(proposal: StoredProposal): Promise<ExecuteResult> {
-    // Stage 1: VALIDATE (no side effects)
+    // Stage 1: Shadow mode intercept (no side effects)
+    if (proposal.proposal.isShadow) {
+      logger.info(
+        {
+          event: 'SHADOW_TRADE_SIMULATED',
+          tokenMint: proposal.proposal.tokenMint,
+          side: proposal.proposal.side,
+        },
+        'Shadow trade intercepted and logged',
+      );
+      return {
+        kind: 'CONFIRMED',
+        execution: {
+          id: randomUUID(),
+          proposalId: proposal.id,
+          tradeRequestId: proposal.tradeRequestId,
+          txSignature: 'shadow_sim',
+          status: 'CONFIRMED',
+          executedAt: Date.now(),
+        },
+      };
+    }
+
     if (proposal.status !== 'APPROVED') {
       return {
         kind: 'REJECTED',
@@ -49,7 +66,7 @@ export class TradeExecutor {
       };
     }
 
-    // Stage 2: idempotency acquire
+    // Stage 2: Idempotency acquire
     const firstTime = await this.deps.idempotency.acquire(
       this.execKey(proposal.tradeRequestId),
     );
@@ -69,10 +86,11 @@ export class TradeExecutor {
       return { kind: 'FAILED', reason: 'DUPLICATE_IN_FLIGHT' };
     }
 
+    // CRITICAL: Once submitStarted is true, the lock is NEVER released automatically.
     let submitStarted = false;
 
     try {
-      // Stage 3: kill switch recheck (Rule 14) — side-aware
+      // Stage 3: Kill switch recheck (side-aware: BUY only)
       if (proposal.proposal.side === 'BUY') {
         const ks = await this.deps.killSwitch.get();
         if (ks.active) {
@@ -91,7 +109,7 @@ export class TradeExecutor {
         }
       }
 
-      // Stage 4: risk re-evaluation
+      // Stage 4: Risk re-evaluation
       const fresh = await this.deps.riskEngine.evaluate(proposal.proposal);
       if (!fresh.allowed) {
         await this.deps.idempotency.release(
@@ -108,7 +126,7 @@ export class TradeExecutor {
         return { kind: 'REJECTED', reason: fresh.reason ?? 'RISK_REJECTED' };
       }
 
-      // Stage 4.5 (SELL): resolve the position BEFORE submission
+      // Stage 4.5: SELL position resolution
       let sellTokenAmount: number | undefined;
       if (proposal.proposal.side === 'SELL') {
         const held = await this.deps.positions.get(proposal.proposal.tokenMint);
@@ -131,11 +149,14 @@ export class TradeExecutor {
           held.quantity * (Math.min(Math.max(pct, 1), 10_000) / 10_000);
       }
 
-      // Stage 5: provider safety gate
+      // Stage 5: Provider safety gate
       this.deps.provider.assertEnabled();
+
+      // === POINT OF NO RETURN ===
+      // From this line onward, the idempotency lock is NEVER released.
       submitStarted = true;
 
-      // Stage 6: SUBMIT
+      // Stage 6: Submit
       const outcome = await this.deps.provider.execute({
         tradeRequestId: proposal.tradeRequestId,
         tokenMint: proposal.proposal.tokenMint,
@@ -147,7 +168,7 @@ export class TradeExecutor {
         quoteFetchedAt: proposal.proposal.quoteFetchedAt,
       });
 
-      // Stage 7: persist
+      // Stage 7: Persist execution record
       const stored: StoredExecution = {
         id: randomUUID(),
         proposalId: proposal.id,
@@ -232,6 +253,7 @@ export class TradeExecutor {
       const reason = err instanceof Error ? err.message : 'UNKNOWN';
 
       if (!submitStarted) {
+        // Pre-submit exception: safe to release the lock.
         await this.deps.idempotency.release(
           this.execKey(proposal.tradeRequestId),
         );
@@ -246,6 +268,7 @@ export class TradeExecutor {
         return { kind: 'FAILED', reason };
       }
 
+      // Post-submit exception: NEVER release the lock.
       logger.error(
         {
           event: 'EXECUTION_ERROR_POST_SUBMIT',

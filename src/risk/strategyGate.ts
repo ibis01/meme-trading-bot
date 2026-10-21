@@ -1,16 +1,5 @@
 import { StrategyVerdictStore } from '../state/strategyVerdicts';
 
-/**
- * Rule 17: stages must not be skipped.
- * Rule 6: the risk engine has final authority — this gate is called by the
- * orchestrator BEFORE the risk engine, so an unapproved strategy never even
- * reaches evaluation in live mode.
- *
- * Audit fix H1: exit strategies are always allowed, even when unapproved.
- * Gating EXITS behind the verdicts table would recreate the C2 failure mode
- * (capital trapped because a safety path needs an approval row). Entries
- * still require explicit approval.
- */
 export class StrategyGate {
   constructor(
     private readonly store: StrategyVerdictStore,
@@ -21,13 +10,25 @@ export class StrategyGate {
   /**
    * Returns null if the strategy is permitted to produce proposals.
    * Returns a rejection reason otherwise.
+   *
+   * FAIL-CLOSED: if the gate is not explicitly enabled, it must reject.
+   * A disabled gate cannot be assumed to mean "permit all" in a capital-handling system.
    */
   async check(
     strategyName: string,
     strategyVersion: string,
   ): Promise<string | null> {
-    if (!this.enabled) return null;
-    if (this.alwaysAllowedStrategies.includes(strategyName)) return null;
+    // 1. Fail-closed if the gate is not explicitly enabled.
+    if (!this.enabled) {
+      return 'STRATEGY_GATE_DISABLED';
+    }
+
+    // 2. Exit strategies are always allowed (risk-reducing).
+    if (this.alwaysAllowedStrategies.includes(strategyName)) {
+      return null;
+    }
+
+    // 3. Entries require explicit approval from the verdict store.
     const approved = await this.store.isApproved(strategyName, strategyVersion);
     return approved
       ? null
