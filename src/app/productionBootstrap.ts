@@ -171,7 +171,9 @@ export function buildProductionApp(): ProductionApp {
       security: security.name,
       market: market?.name ?? 'none',
       executor: provider.name,
-      strategyGateEnabled: config.TRADING_MODE === 'live',
+      strategyGateEnabled:
+        config.TRADING_MODE === 'live' ||
+        process.env.STRATEGY_GATE_ENABLED === 'true',
     },
     'Production app assembled',
   );
