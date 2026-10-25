@@ -20,6 +20,14 @@ interface DexResponse {
 
 const MIN_POOL_LIQUIDITY_USD = 1_000;
 const MAX_POOL_PRICE_RATIO = 10;
+// Audit note (BONK pollution, 2026-10-25): a mint with one deep main pool and
+// several tiny side-pools made this provider refuse EVERY snapshot (the
+// 12/13-tick noise) because max/min price ratio ignored pool size. A deviating
+// pool may therefore only veto the dominant price if it is MATERIAL — at
+// least this share of the dominant pool's liquidity. A $2k pool quoting 100x
+// off cannot mute a $30M market; two large pools that genuinely disagree
+// still fail closed.
+const OUTLIER_LIQUIDITY_SHARE = 0.05;
 
 /**
  * DexScreener market data provider.
@@ -73,16 +81,68 @@ export class DexScreenerMarketProvider implements MarketDataProvider {
 
       // Rule 30: if pools with real liquidity disagree wildly on this mint's
       // price, the data is contradictory — refuse rather than pick one.
+      // The disagreement is judged against the DOMINANT pool (highest
+      // liquidity), and only MATERIAL deviating pools (>= OUTLIER_LIQUIDITY_SHARE
+      // of the dominant pool's liquidity) may veto it. Immaterial deviating
+      // pools are logged and ignored instead of blinding the bot to the mint.
       const quoted = baseSide
         .map((p) => ({ p, price: numOrNull(p.priceUsd), liq: numOrNull(p.liquidity?.usd) }))
         .filter((x) => x.price !== null && x.price > 0 && x.liq !== null && x.liq >= MIN_POOL_LIQUIDITY_USD);
       if (quoted.length > 1) {
-        const prices = quoted.map((x) => x.price as number);
-        if (Math.max(...prices) / Math.min(...prices) > MAX_POOL_PRICE_RATIO) {
+        const dominant = quoted.reduce((a, b) =>
+          (a.liq ?? 0) >= (b.liq ?? 0) ? a : b,
+        );
+        const dominantPrice = dominant.price as number;
+        const dominantLiq = dominant.liq as number;
+        const minVetoLiquidity = dominantLiq * OUTLIER_LIQUIDITY_SHARE;
+        const deviates = (price: number) =>
+          price > dominantPrice * MAX_POOL_PRICE_RATIO ||
+          price < dominantPrice / MAX_POOL_PRICE_RATIO;
+
+        const materialVeto = quoted.find(
+          (x) =>
+            (x.liq as number) >= minVetoLiquidity &&
+            deviates(x.price as number),
+        );
+
+        const ignoredOutliers = quoted.filter(
+          (x) =>
+            (x.liq as number) < minVetoLiquidity &&
+            deviates(x.price as number),
+        );
+        if (ignoredOutliers.length > 0) {
+          logger.info(
+            {
+              event: 'DEXSCREENER_OUTLIER_POOLS_IGNORED',
+              token: tokenMint,
+              dominant: {
+                dex: dominant.p.dexId,
+                pair: dominant.p.pairAddress,
+                priceUsd: dominantPrice,
+                liquidityUsd: dominantLiq,
+              },
+              ignored: ignoredOutliers.map((x) => ({
+                dex: x.p.dexId,
+                pair: x.p.pairAddress,
+                priceUsd: x.price,
+                liquidityUsd: x.liq,
+              })),
+            },
+            'Immaterial deviating pools excluded from price consensus (<5% of dominant liquidity)',
+          );
+        }
+
+        if (materialVeto) {
           logger.warn(
             {
               event: 'DEXSCREENER_PRICE_DISAGREEMENT',
               token: tokenMint,
+              dominant: {
+                dex: dominant.p.dexId,
+                pair: dominant.p.pairAddress,
+                priceUsd: dominantPrice,
+                liquidityUsd: dominantLiq,
+              },
               pools: quoted.map((x) => ({
                 dex: x.p.dexId,
                 pair: x.p.pairAddress,
@@ -90,7 +150,7 @@ export class DexScreenerMarketProvider implements MarketDataProvider {
                 liquidityUsd: x.liq,
               })),
             },
-            'Pools disagree on price by >10x — refusing to build snapshot',
+            'Material pool disagrees with dominant price by >10x — refusing to build snapshot',
           );
           return null;
         }

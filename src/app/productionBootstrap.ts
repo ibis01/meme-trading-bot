@@ -49,6 +49,7 @@ import {
   StrategyVerdictStore,
 } from '../state/strategyVerdicts';
 import { StrategyGate } from '../risk/strategyGate';
+import { resolveStrategyGateEnabled } from '../risk/gatePolicy';
 import { ExecutionProvider } from '../execution/types';
 import { SecurityProvider } from '../security/types';
 import { EXIT_MONITOR_STRATEGY } from '../app/exitMonitor';
@@ -136,17 +137,17 @@ export function buildProductionApp(): ProductionApp {
     // rejectionStore remains undefined in memory mode
   }
 
-  // Rule 17: the gate is active in live mode (mandatory, fail-closed at this
-  // layer) and in paper mode only when the operator explicitly opts in via
-  // STRATEGY_GATE_ENABLED=true — which requires a seeded verdict row for the
-  // entry strategy, otherwise entries reject with STRATEGY_NOT_APPROVED.
-  // Paper default stays unconstrained so the 7-day soak keeps producing
-  // trades and PnL data.
-  // Audit fix H1: the exit monitor's strategy is always allowed — exits must
-  // never wait on an approvals row (that would recreate failure mode C2).
-  const strategyGateEnabled =
-    config.TRADING_MODE === 'live' ||
-    process.env.STRATEGY_GATE_ENABLED === 'true';
+  // Rule 17 / audit fix H1: gate enablement semantics live in
+  // src/risk/gatePolicy.ts (tested in tests/strategyGatePolicy.test.ts):
+  // live → always on (fail-closed); paper/manual → off unless the operator
+  // explicitly opts in via STRATEGY_GATE_ENABLED=true. A disabled gate means
+  // "no strategy-level gating", NEVER "reject everything". The exit
+  // monitor's strategy is always allowed regardless (exits must never wait
+  // on an approvals row — failure mode C2).
+  const strategyGateEnabled = resolveStrategyGateEnabled(
+    config.TRADING_MODE,
+    process.env.STRATEGY_GATE_ENABLED,
+  );
 
   const strategyGate = new StrategyGate(verdicts, strategyGateEnabled, [
     EXIT_MONITOR_STRATEGY,
