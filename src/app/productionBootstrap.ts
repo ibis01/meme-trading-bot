@@ -84,6 +84,8 @@ function selectSecurityProvider(): SecurityProvider {
 
 export function buildProductionApp(): ProductionApp {
   const redis = getRedis();
+  // Audit fix M4: reads fail closed (and stay legible) during a Redis outage
+  // instead of throwing opaque errors from every trade path.
   const killSwitch: KillSwitchStore = new ResilientKillSwitch(
     new RedisKillSwitch(redis as never),
     (err) =>
@@ -121,8 +123,6 @@ export function buildProductionApp(): ProductionApp {
     executions = new PostgresExecutionStore(pool);
     signals = new PostgresSignalStore(pool);
     verdicts = new PostgresStrategyVerdictStore(pool);
-
-    // Initialize rejectionStore here where `pool` is in scope
     rejectionStore = new PostgresRejectionStore(pool);
   } else {
     storeBackend = 'memory';
@@ -136,7 +136,14 @@ export function buildProductionApp(): ProductionApp {
     // rejectionStore remains undefined in memory mode
   }
 
-  // Gate is active in live mode OR when the env var explicitly enables it.
+  // Rule 17: the gate is active in live mode (mandatory, fail-closed at this
+  // layer) and in paper mode only when the operator explicitly opts in via
+  // STRATEGY_GATE_ENABLED=true — which requires a seeded verdict row for the
+  // entry strategy, otherwise entries reject with STRATEGY_NOT_APPROVED.
+  // Paper default stays unconstrained so the 7-day soak keeps producing
+  // trades and PnL data.
+  // Audit fix H1: the exit monitor's strategy is always allowed — exits must
+  // never wait on an approvals row (that would recreate failure mode C2).
   const strategyGateEnabled =
     config.TRADING_MODE === 'live' ||
     process.env.STRATEGY_GATE_ENABLED === 'true';
@@ -145,7 +152,6 @@ export function buildProductionApp(): ProductionApp {
     EXIT_MONITOR_STRATEGY,
   ]);
 
-  // Re-added provider which was missing in the paste
   const provider: ExecutionProvider =
     config.TRADING_MODE === 'live'
       ? new LiveExecutionProvider()
@@ -181,7 +187,7 @@ export function buildProductionApp(): ProductionApp {
       security: security.name,
       market: market?.name ?? 'none',
       executor: provider.name,
-      strategyGateEnabled, // Used the variable to ensure log matches actual state
+      strategyGateEnabled,
     },
     'Production app assembled',
   );

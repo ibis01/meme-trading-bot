@@ -69,6 +69,9 @@ async function requireTradingAllowed(
     };
   }
   if (ks.active && side === 'SELL') {
+    // Exits are risk-REDUCING: they stay available while the kill switch is
+    // active (audit fix C2). Otherwise /emergency would trap open positions
+    // with no way to flatten. The executor + risk engine apply the same rule.
     audit('CMD_SELL_UNDER_KILL_SWITCH', { userId: ctx.userId, command });
   }
   return null;
@@ -135,7 +138,8 @@ export async function handlePositions(
   audit('CMD_POSITIONS', { userId: ctx.userId, count });
 
   if (count === 0) {
-    return { ok: true, message: `📊 No open positions.` };
+    // Original contract kept: tests and runbooks match "Open positions: N".
+    return { ok: true, message: `📊 Open positions: ${count}` };
   }
 
   let message = `📊 Open positions (${count}):\n\n`;

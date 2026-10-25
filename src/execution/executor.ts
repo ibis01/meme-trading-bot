@@ -28,6 +28,11 @@ export type ExecuteResult =
   | { kind: 'DUPLICATE'; execution: StoredExecution }
   | { kind: 'FAILED'; reason: string };
 
+/**
+ * Rule 11: executor honors a four-state submission model.
+ * Rule 24: pre-submit failures release the idempotency lock (safe to retry).
+ *          post-submit failures NEVER release the lock (retry could double-submit).
+ */
 export class TradeExecutor {
   constructor(private readonly deps: TradeExecutorDeps) {}
 
@@ -36,7 +41,11 @@ export class TradeExecutor {
   }
 
   async execute(proposal: StoredProposal): Promise<ExecuteResult> {
-    // Stage 1: Shadow mode intercept (no side effects)
+    // Stage 0: shadow proposals (Phase 1 scaffold) simulate with NO side
+    // effects — no idempotency, no stores, no provider. NOTE: this runs
+    // before the APPROVED check by design; nothing may set isShadow on a
+    // live-trading path until that ordering is explicitly reviewed and
+    // covered by tests.
     if (proposal.proposal.isShadow) {
       logger.info(
         {
@@ -59,6 +68,7 @@ export class TradeExecutor {
       };
     }
 
+    // Stage 1: VALIDATE (no side effects)
     if (proposal.status !== 'APPROVED') {
       return {
         kind: 'REJECTED',
@@ -66,7 +76,7 @@ export class TradeExecutor {
       };
     }
 
-    // Stage 2: Idempotency acquire
+    // Stage 2: idempotency acquire
     const firstTime = await this.deps.idempotency.acquire(
       this.execKey(proposal.tradeRequestId),
     );
@@ -86,11 +96,15 @@ export class TradeExecutor {
       return { kind: 'FAILED', reason: 'DUPLICATE_IN_FLIGHT' };
     }
 
-    // CRITICAL: Once submitStarted is true, the lock is NEVER released automatically.
+    // Anything from here until `submitStarted = true` is pre-submit and safe
+    // to release the lock on rejection. After that, the lock is NEVER released
+    // automatically — a retry could double-submit.
     let submitStarted = false;
 
     try {
-      // Stage 3: Kill switch recheck (side-aware: BUY only)
+      // Stage 3: kill switch recheck (Rule 14) — side-aware (audit fix C2):
+      // the switch blocks new risk (BUYs); SELLs stay available so /pause or
+      // /emergency can never trap open positions with no way to flatten.
       if (proposal.proposal.side === 'BUY') {
         const ks = await this.deps.killSwitch.get();
         if (ks.active) {
@@ -109,7 +123,7 @@ export class TradeExecutor {
         }
       }
 
-      // Stage 4: Risk re-evaluation
+      // Stage 4: risk re-evaluation (catches stale quotes)
       const fresh = await this.deps.riskEngine.evaluate(proposal.proposal);
       if (!fresh.allowed) {
         await this.deps.idempotency.release(
@@ -126,7 +140,10 @@ export class TradeExecutor {
         return { kind: 'REJECTED', reason: fresh.reason ?? 'RISK_REJECTED' };
       }
 
-      // Stage 4.5: SELL position resolution
+      // Stage 4.5 (SELL): resolve the position BEFORE submission so the
+      // provider knows the exact token quantity to sell. Failing here is a
+      // pre-submit rejection (safe to retry later, unlike a fill with no
+      // position on record).
       let sellTokenAmount: number | undefined;
       if (proposal.proposal.side === 'SELL') {
         const held = await this.deps.positions.get(proposal.proposal.tokenMint);
@@ -149,14 +166,15 @@ export class TradeExecutor {
           held.quantity * (Math.min(Math.max(pct, 1), 10_000) / 10_000);
       }
 
-      // Stage 5: Provider safety gate
+      // Stage 5: provider safety gate (Rule 34)
       this.deps.provider.assertEnabled();
 
       // === POINT OF NO RETURN ===
-      // From this line onward, the idempotency lock is NEVER released.
+      // From this line onward we DO NOT release the idempotency lock, even on
+      // rejection, because a submission attempt may have reached the network.
       submitStarted = true;
 
-      // Stage 6: Submit
+      // Stage 6: SUBMIT
       const outcome = await this.deps.provider.execute({
         tradeRequestId: proposal.tradeRequestId,
         tokenMint: proposal.proposal.tokenMint,
@@ -179,6 +197,7 @@ export class TradeExecutor {
         executedAt: Date.now(),
       };
 
+      // Duplicate signature guard (Rule 24)
       if (outcome.txSignature) {
         const clash = await this.deps.executions.getBySignature(
           outcome.txSignature,
@@ -192,6 +211,7 @@ export class TradeExecutor {
             },
             'Duplicate tx signature — refusing to persist',
           );
+          // Keep the lock: this submission reached the network and produced a signature.
           return { kind: 'FAILED', reason: 'DUPLICATE_TX_SIGNATURE' };
         }
       }

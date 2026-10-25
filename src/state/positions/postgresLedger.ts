@@ -9,6 +9,10 @@ import {
   PositionLedger,
 } from './types';
 
+/**
+ * Rule 24: open/close are transactional. We lock the position row FOR UPDATE
+ * so two concurrent fills cannot race on the average-cost computation.
+ */
 export class PostgresPositionLedger implements PositionLedger {
   constructor(private readonly pool: Pool) {}
 
