@@ -41,6 +41,51 @@ export const envSchema = z.object({
   EXIT_CHECK_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
 
   WALLET_PRIVATE_KEY: z.string().optional(),
+
+  // ── Phase 2: multi-agent LLM debate (advisory layer) ─────────────────
+  // Rule 28: AI may advise, never decide. The debate layer is purely
+  // advisory — it can only reduce entries (veto), never approve or enlarge.
+  // See docs/PHASE2_DESIGN.md for the full contract.
+  // off (default) = zero LLM calls, zero behavioral delta.
+  DEBATE_MODE: z.enum(['off', 'shadow', 'advise']).default('off'),
+  // OpenAI-compatible chat completions endpoint.
+  LLM_BASE_URL: z.string().url().optional(),
+  LLM_API_KEY: z.string().min(1).optional(),
+  LLM_MODEL: z.string().min(1).optional(),
+  // Cost per 1k tokens (USD) — makes the daily-budget guard fully active.
+  // Without them the budget guard falls back to the daily call cap.
+  LLM_COST_PER_1K_INPUT_USD: z.coerce.number().min(0).optional(),
+  LLM_COST_PER_1K_OUTPUT_USD: z.coerce.number().min(0).optional(),
+  // Veto path (advise mode only): judge must return vetoRecommended=true with
+  // stance != SUPPORT and confidence >= this threshold.
+  DEBATE_VETO_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+  // Budget controls (§5 of the design).
+  DEBATE_PER_CALL_TIMEOUT_MS: z.coerce.number().int().positive().default(6000),
+  DEBATE_WINDOW_MAX: z.coerce.number().int().positive().default(8),
+  DEBATE_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  DEBATE_DAILY_MAX: z.coerce.number().int().positive().default(300),
+  DEBATE_DAILY_BUDGET_USD: z.coerce.number().positive().default(2.0),
+  DEBATE_FAILURE_BREAKER_THRESHOLD: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(5),
+  DEBATE_FAILURE_BREAKER_OPEN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(15 * 60 * 1000),
+  // Dead-man switch: advise mode refuses to start in TRADING_MODE=live unless
+  // this is explicitly true.
+  DEBATE_ADVISE_LIVE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  // ── Rule 11 live execution: Jupiter routing + bounded confirmation ────
+  JUPITER_API_URL: z.string().url().default('https://quote-api.jup.ag/v6'),
+  LIVE_CONFIRM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+  LIVE_CONFIRM_POLL_MS: z.coerce.number().int().positive().default(2_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

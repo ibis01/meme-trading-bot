@@ -8,7 +8,9 @@ import {
   PostgresRejectionStore,
   RejectionStore,
 } from '../state/proposalRejections';
-import { LiveExecutionProvider } from '../execution/live';
+import { LiveExecutionProvider, parseWalletKey } from '../execution/live';
+import { JupiterClient } from '../execution/jupiter';
+import { SolanaRpcClient } from '../data/solanaRpc';
 import { MockSecurityProvider } from '../security';
 import { RugCheckProvider } from '../security/rugcheck';
 import { HeliusMarketProvider } from '../data/helius';
@@ -53,6 +55,15 @@ import { resolveStrategyGateEnabled } from '../risk/gatePolicy';
 import { ExecutionProvider } from '../execution/types';
 import { SecurityProvider } from '../security/types';
 import { EXIT_MONITOR_STRATEGY } from '../app/exitMonitor';
+import { HttpLlmClient } from '../llm/client';
+import { resolveDebateMode } from '../debate/mode';
+import { DebateService } from '../debate/service';
+import { ProductionDebateAdvisor, DebateAdvisor } from '../debate/advisor';
+import {
+  PostgresDebateStore,
+  InMemoryDebateStore,
+  DebateVerdictStore,
+} from '../state/debateVerdicts';
 
 export interface ProductionApp {
   killSwitch: KillSwitchStore;
@@ -67,6 +78,8 @@ export interface ProductionApp {
   orchestrator: ProposalOrchestrator;
   executor: TradeExecutor;
   storeBackend: 'postgres' | 'memory';
+  /** Phase 2 advisory debate layer. Undefined when DEBATE_MODE=off. */
+  debateAdvisor?: DebateAdvisor;
 }
 
 function selectSecurityProvider(): SecurityProvider {
@@ -153,9 +166,77 @@ export function buildProductionApp(): ProductionApp {
     EXIT_MONITOR_STRATEGY,
   ]);
 
+  // Phase 2: advisory debate layer (docs/PHASE2_DESIGN.md §7).
+  // resolveDebateMode is the single source of truth for the mode matrix:
+  //   off (default) → advisor NOT constructed, zero behavioral delta.
+  //   shadow        → advisor constructed (requires DATABASE_URL + LLM_* env).
+  //                   Verdicts recorded + logged; outcome provably identical to off.
+  //   advise        → additionally may inject DEBATE_VETO rejections.
+  //                   Refuses to start in TRADING_MODE=live without DEBATE_ADVISE_LIVE=true.
+  // Fatal on any required-env miss — never a silent no-op (§2.3 fail-loud).
+  let debateAdvisor: DebateAdvisor | undefined;
+  const debateResolution = resolveDebateMode({
+    mode: config.DEBATE_MODE,
+    tradingMode: config.TRADING_MODE,
+    databaseUrl: config.DATABASE_URL,
+    llmBaseUrl: config.LLM_BASE_URL,
+    llmApiKey: config.LLM_API_KEY,
+    llmModel: config.LLM_MODEL,
+    adviseLive: config.DEBATE_ADVISE_LIVE,
+  });
+  if (debateResolution.construct && debateResolution.llm) {
+    // The debate store is ALWAYS Postgres when constructed — debates never
+    // run in memory-only mode (the audit trail must be persistent). The
+    // InMemoryDebateStore exists only for unit tests of DebateService.
+    const debateStore: DebateVerdictStore =
+      storeBackend === 'postgres'
+        ? new PostgresDebateStore(getPool())
+        : new InMemoryDebateStore();
+    const llmClient = new HttpLlmClient(
+      debateResolution.llm.baseUrl,
+      debateResolution.llm.apiKey,
+    );
+    // construct=true implies mode is 'shadow' | 'advise' (resolveDebateMode
+    // never returns construct=true with mode='off'). The cast is local and
+    // safe; the alternative (a discriminated union return type) would push
+    // complexity into every caller for no real gain.
+    const runtimeMode = debateResolution.mode as 'shadow' | 'advise';
+    const debateService = new DebateService(llmClient, debateStore, {
+      mode: runtimeMode,
+      model: debateResolution.llm.model,
+      perCallTimeoutMs: config.DEBATE_PER_CALL_TIMEOUT_MS,
+      vetoConfidence: config.DEBATE_VETO_CONFIDENCE,
+      windowMax: config.DEBATE_WINDOW_MAX,
+      windowMs: config.DEBATE_WINDOW_MS,
+      dailyMax: config.DEBATE_DAILY_MAX,
+      dailyBudgetUsd: config.DEBATE_DAILY_BUDGET_USD,
+      failureBreakerThreshold: config.DEBATE_FAILURE_BREAKER_THRESHOLD,
+      failureBreakerOpenMs: config.DEBATE_FAILURE_BREAKER_OPEN_MS,
+      costPer1kInputUsd: config.LLM_COST_PER_1K_INPUT_USD,
+      costPer1kOutputUsd: config.LLM_COST_PER_1K_OUTPUT_USD,
+    });
+    debateAdvisor = new ProductionDebateAdvisor(debateService, security);
+    logger.info(
+      { event: 'DEBATE_ADVISOR_CONSTRUCTED', mode: debateResolution.mode, model: debateResolution.llm.model },
+      'Phase 2 debate advisor constructed',
+    );
+  } else {
+    logger.info(
+      { event: 'DEBATE_ADVISOR_OFF', mode: config.DEBATE_MODE },
+      'Debate advisor not constructed (DEBATE_MODE=off)',
+    );
+  }
+
   const provider: ExecutionProvider =
     config.TRADING_MODE === 'live'
-      ? new LiveExecutionProvider()
+      ? new LiveExecutionProvider({
+          jupiter: new JupiterClient(config.JUPITER_API_URL),
+          rpc: new SolanaRpcClient(config.SOLANA_RPC_URL),
+          wallet: parseWalletKey(config.WALLET_PRIVATE_KEY as string),
+          maxQuoteAgeMs: config.MAX_QUOTE_AGE_MS,
+          confirmTimeoutMs: config.LIVE_CONFIRM_TIMEOUT_MS,
+          confirmPollMs: config.LIVE_CONFIRM_POLL_MS,
+        })
       : new PaperExecutionProvider(new StaticPriceOracle({}));
 
   const riskEngine = new RiskEngine({ killSwitch, pnl, positions });
@@ -168,6 +249,7 @@ export function buildProductionApp(): ProductionApp {
     signals,
     strategyGate,
     rejectionStore, // Now properly passed
+    debateAdvisor,
   });
 
   const executor = new TradeExecutor({
@@ -189,6 +271,8 @@ export function buildProductionApp(): ProductionApp {
       market: market?.name ?? 'none',
       executor: provider.name,
       strategyGateEnabled,
+      debateMode: config.DEBATE_MODE,
+      debateAdvisorActive: debateAdvisor !== undefined,
     },
     'Production app assembled',
   );
@@ -206,6 +290,7 @@ export function buildProductionApp(): ProductionApp {
     orchestrator,
     executor,
     storeBackend,
+    debateAdvisor,
   };
 }
 

@@ -1,7 +1,12 @@
 # Phase 2 Design — Multi-Agent Debate (Advisory Layer)
 
-Status: PROPOSED — for review by operator + roadmap session before any implementation.
-Author: audit session, 2026-10-25. Baseline audited: `origin/main@8e1f295` (77 suites / 447 tests green).
+Status: **IMPLEMENTED** — landed via the patch pipeline with tests. See
+`docs/PHASE2_TASK_REPORT.md` for the task report (Changed / Security / Tests /
+Risks / Next). Baseline at implementation: 77 suites / 447 tests green;
+post-implementation: 83 suites / 526 tests green. Typecheck + lint clean.
+
+Originally PROPOSED for review by operator + roadmap session, authored in the
+audit session of 2026-10-25 against `origin/main@8e1f295`.
 
 ---
 
