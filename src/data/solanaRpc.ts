@@ -91,6 +91,38 @@ export class SolanaRpcClient {
   }
 
   /**
+   * Raw base64 data of an Address Lookup Table account (audit fix #2: the
+   * swap-tx guard must resolve v0 lookup tables to validate EVERY program id
+   * and account). Returns null for any error, wrong owner, or wrong
+   * encoding — the caller fails closed.
+   */
+  async getAddressLookupTable(key: string): Promise<{ data: string } | null> {
+    const body = {
+      jsonrpc: '2.0',
+      id: this.nextId++,
+      method: 'getAccountInfo',
+      params: [key, { encoding: 'base64' }],
+    };
+    try {
+      const res = await this.fetchImpl(this.rpcUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return null;
+      const json = (await res.json()) as RpcResponse<{
+        value?: { data?: [string, string]; owner?: string } | null;
+      }>;
+      const acc = json.result?.value;
+      if (!acc || !Array.isArray(acc.data) || acc.data[1] !== 'base64') return null;
+      if (acc.owner !== 'AddressLookupTab1e1111111111111111111111111') return null;
+      return { data: acc.data[0] };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Simulates a signed, serialized transaction. Returns the simulation error
    * (null when the simulation succeeded) plus logs. Rule 11: SIMULATE is a
    * mandatory stage before SUBMIT.

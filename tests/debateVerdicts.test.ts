@@ -209,3 +209,100 @@ describe('InMemoryDebateStore', () => {
     expect((await store.getBySignal('sig_1', 'advise'))!.outcome).toBe('UNAVAILABLE');
   });
 });
+
+// ── Migration 013: claim-based idempotency (audit fix #5) ────────────────
+
+describe('PostgresDebateStore — claim SQL contract (migration 013)', () => {
+  it('tryClaim: atomic INSERT-or-steal CTE with lease params; acquired when a row returns', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{ owner_id: 'abc-uuid' }], rowCount: 1 });
+    const store = new PostgresDebateStore({ query } as unknown as Pool);
+
+    const claim = await store.tryClaim('sig_1', 'advise', 60_000, Date.now());
+    expect(claim.acquired).toBe(true);
+    expect(claim.token).toBe('abc-uuid');
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('INSERT INTO debate_claims');
+    expect(sql).toContain('ON CONFLICT (signal_id, mode) DO NOTHING');
+    expect(sql).toContain('UPDATE debate_claims'); // lease steal path
+    expect(sql).toContain('lease_expires_at < NOW()');
+    expect(params[0]).toBe('sig_1');
+    expect(params[1]).toBe('advise');
+    expect(params[2]).toBe(60_000);
+  });
+
+  it('tryClaim: HELD when the CTE returns no row (another worker holds a live lease)', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const store = new PostgresDebateStore({ query } as unknown as Pool);
+    const claim = await store.tryClaim('sig_1', 'advise', 60_000, Date.now());
+    expect(claim.acquired).toBe(false);
+    expect(claim.token).toBeNull();
+  });
+
+  it('releaseClaim: deletes ONLY the caller’s own claim row', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    const store = new PostgresDebateStore({ query } as unknown as Pool);
+    const released = await store.releaseClaim('sig_1', 'advise', 'abc-uuid');
+    expect(released).toBe(true);
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('DELETE FROM debate_claims');
+    expect(sql).toContain('owner_id = $3::uuid');
+    expect(params[0]).toBe('sig_1');
+    expect(params[1]).toBe('advise');
+    expect(params[2]).toBe('abc-uuid');
+  });
+
+  it('releaseClaim: rowCount 0 → false (not our claim / already released)', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const store = new PostgresDebateStore({ query } as unknown as Pool);
+    const released = await store.releaseClaim('sig_1', 'advise', 'other-uuid');
+    expect(released).toBe(false);
+  });
+});
+
+describe('InMemoryDebateStore — claim semantics', () => {
+  it('acquires once; concurrent second claim is HELD without spending', async () => {
+    const { InMemoryDebateStore } = await import('../src/state/debateVerdicts');
+    const store = new InMemoryDebateStore();
+    const t = 1_000_000;
+
+    const first = await store.tryClaim('sig_1', 'advise', 60_000, t);
+    expect(first.acquired).toBe(true);
+    expect(first.token).not.toBeNull();
+
+    const second = await store.tryClaim('sig_1', 'advise', 60_000, t);
+    expect(second.acquired).toBe(false);
+    expect(second.token).toBeNull();
+
+    // Same signal, different mode — independent claim namespace.
+    const otherMode = await store.tryClaim('sig_1', 'shadow', 60_000, t);
+    expect(otherMode.acquired).toBe(true);
+    expect(store.claimCount()).toBe(2);
+  });
+
+  it('steals an expired lease atomically and re-arms it for the new owner', async () => {
+    const { InMemoryDebateStore } = await import('../src/state/debateVerdicts');
+    const store = new InMemoryDebateStore();
+    let t = 1_000_000;
+
+    const first = await store.tryClaim('sig_1', 'advise', 5_000, t);
+    expect(first.acquired).toBe(true);
+
+    t += 4_999; // still inside the lease
+    const stillHeld = await store.tryClaim('sig_1', 'advise', 5_000, t);
+    expect(stillHeld.acquired).toBe(false);
+
+    t += 2; // lease expired → steal
+    const stolen = await store.tryClaim('sig_1', 'advise', 5_000, t);
+    expect(stolen.acquired).toBe(true);
+    expect(stolen.token).not.toBeNull();
+    expect(stolen.token).not.toBe(first.token);
+
+    // The OLD owner can no longer release (non-owning token ignored).
+    expect(await store.releaseClaim('sig_1', 'advise', first.token!)).toBe(false);
+    // The NEW owner can.
+    expect(await store.releaseClaim('sig_1', 'advise', stolen.token!)).toBe(true);
+    expect(store.claimCount()).toBe(0);
+  });
+});

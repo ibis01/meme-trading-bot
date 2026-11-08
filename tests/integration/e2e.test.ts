@@ -47,8 +47,9 @@ describeIf('E2E: pipeline + restart durability', () => {
     // Reset it anyway so any leftover consumers see a clean slate.
     await pool.query('UPDATE portfolio_state SET open_positions = 0');
     await pool.query('DELETE FROM daily_pnl');
-    // Phase 2: clear the debate verdicts table (migration 012).
+    // Phase 2: clear the debate verdicts + claim tables (migrations 012/013).
     await pool.query('DELETE FROM debate_verdicts');
+    await pool.query('DELETE FROM debate_claims');
     // Phase 1: clear the proposal rejections audit table (migration 011).
     await pool.query('DELETE FROM proposal_rejections');
   });

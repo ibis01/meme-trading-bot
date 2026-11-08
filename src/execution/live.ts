@@ -1,9 +1,19 @@
-import { Keypair, VersionedTransaction } from '@solana/web3.js';
+import {
+  AddressLookupTableAccount,
+  Keypair,
+  PublicKey,
+  VersionedTransaction,
+  VersionedMessage,
+} from '@solana/web3.js';
 import bs58 from 'bs58';
 import { config } from '../config';
 import { ExecutionProvider, ExecutionRequest, ExecutionOutcome } from './types';
 import { JupiterClient, SOL_MINT, JupiterError } from './jupiter';
 import { SolanaRpcClient } from '../data/solanaRpc';
+import {
+  validateSwapTxShape,
+  SwapInstruction,
+} from './txGuard';
 import { logger } from '../utils/logger';
 
 /**
@@ -125,8 +135,19 @@ export class LiveExecutionProvider implements ExecutionProvider {
     }
 
     // ── Stage 2: VALIDATE (price impact + freshness) ─────────────────────
-    const impactBps = fractionToBps(quote.priceImpactPct);
-    if (impactBps !== null && impactBps > req.maxPriceImpactBps) {
+    // Audit fix #1 (CRITICAL, fail closed): missing or malformed price-impact
+    // evidence can NEVER pass the gate. The old code coerced absent data to
+    // 0 bps and let unparseable values (null) through — a corrupted or
+    // hostile quote silently bypassed the capital-protection gate.
+    const impactBps = parsePriceImpactBps(quote.priceImpactPct);
+    if (impactBps === null) {
+      logger.warn(
+        { event: 'LIVE_EXECUTION_FAILED', tradeRequestId: req.tradeRequestId, reason: 'PRICE_IMPACT_UNAVAILABLE', raw: quote.priceImpactPct },
+        'Quote price impact missing/malformed — failing closed pre-submit',
+      );
+      return fail('FAILED', 'PRICE_IMPACT_UNAVAILABLE');
+    }
+    if (impactBps > req.maxPriceImpactBps) {
       logger.warn(
         { event: 'LIVE_EXECUTION_FAILED', tradeRequestId: req.tradeRequestId, reason: 'PRICE_IMPACT_EXCEEDED', impactBps, maxPriceImpactBps: req.maxPriceImpactBps },
         'Quote price impact exceeds the gate — rejecting pre-submit',
@@ -150,6 +171,19 @@ export class LiveExecutionProvider implements ExecutionProvider {
     let signedTxB64: string;
     try {
       const tx = VersionedTransaction.deserialize(Buffer.from(swapTx.swapTransaction, 'base64'));
+
+      // ── Stage 3.5: TX GUARD (audit fix #2, CRITICAL — fail closed).
+      // The transaction is UNTRUSTED INPUT. Validate programs, signers, fee
+      // payer and token-account instructions BEFORE the key touches it.
+      const guard = await this.guardSwapTransaction(tx);
+      if (!guard.ok) {
+        logger.error(
+          { event: 'LIVE_EXECUTION_FAILED', tradeRequestId: req.tradeRequestId, reason: 'TX_GUARD_REJECTED', detail: guard.reason },
+          'Swap transaction failed the instruction guard — refusing to sign',
+        );
+        return fail('FAILED', `TX_GUARD_REJECTED:${guard.reason}`);
+      }
+
       tx.sign([this.deps.wallet]);
       signedTxB64 = Buffer.from(tx.serialize()).toString('base64');
     } catch (err) {
@@ -176,6 +210,17 @@ export class LiveExecutionProvider implements ExecutionProvider {
         'Simulation rejected the transaction pre-submit',
       );
       return fail('FAILED', `SIMULATION_REJECTED:${JSON.stringify(sim.err).slice(0, 200)}`);
+    }
+
+    // ── Stage 4.5: FINAL FRESHNESS RECHECK (audit fix #6). Simulation can
+    // burn most of the staleness budget; the submit decision uses the
+    // freshest possible age so an expired quote is NEVER broadcast.
+    if (this.now() - quoteFetchedAt > this.deps.maxQuoteAgeMs) {
+      logger.warn(
+        { event: 'LIVE_EXECUTION_FAILED', tradeRequestId: req.tradeRequestId, reason: 'QUOTE_STALE_AT_SUBMIT' },
+        'Quote expired during simulation — refusing to submit a stale quote',
+      );
+      return fail('FAILED', 'QUOTE_STALE_AT_SUBMIT');
     }
 
     // ── Stage 5: SUBMIT ──────────────────────────────────────────────────
@@ -266,14 +311,38 @@ export class LiveExecutionProvider implements ExecutionProvider {
       return fail('UNKNOWN', 'VERIFY_WALLET_NOT_IN_TX');
     }
 
-    const pre = tx.meta.preBalances?.[walletIdx];
-    const post = tx.meta.postBalances?.[walletIdx];
-    if (typeof pre !== 'number' || typeof post !== 'number') {
+    // ── SOL fill accounting (audit fix #3): the RAW wallet delta conflates
+    // three things — the trade, the tx fee, and rent locked in accounts the
+    // tx created. Book ONLY the trade:
+    //   adjustedDelta = walletDelta + fee + rentLocked
+    //     fee        — meta.fee (base + priority), charged separately from
+    //                  the swap and never part of the fill.
+    //     rentLocked — lamports parked in accounts CREATED by this tx that
+    //                  persist (pre===0 → created in-tx; post>0 → kept, e.g.
+    //                  a new ATA). Temp wSOL wrappers close at the end (post
+    //                  0) and contribute zero; pool/vault balances have
+    //                  pre>0, so swap flows through them are never counted.
+    const preBalances = tx.meta.preBalances;
+    const postBalances = tx.meta.postBalances;
+    const fee = tx.meta.fee;
+    if (
+      !preBalances ||
+      !postBalances ||
+      preBalances.length !== postBalances.length ||
+      keys.length !== preBalances.length ||
+      typeof fee !== 'number' ||
+      walletIdx >= preBalances.length
+    ) {
       return fail('UNKNOWN', 'VERIFY_BALANCES_MISSING');
     }
-    const solDeltaLamports = post - pre; // negative for BUY (spend), positive for SELL (receive)
-    const filledAmountSol = (isBuy ? -solDeltaLamports : solDeltaLamports) / LAMPORTS_PER_SOL;
-
+    let rentLocked = 0;
+    for (let i = 0; i < preBalances.length; i++) {
+      if (i === walletIdx) continue;
+      if (preBalances[i] === 0 && postBalances[i] > 0) rentLocked += postBalances[i];
+    }
+    const walletDelta = postBalances[walletIdx] - preBalances[walletIdx];
+    const adjustedDelta = walletDelta + fee + rentLocked;
+    const filledAmountSol = (isBuy ? -adjustedDelta : adjustedDelta) / LAMPORTS_PER_SOL;
     // Token deltas from pre/postTokenBalances (sum across the wallet's
     // accounts for this mint — ATA + any wrapped accounts).
     const sumFor = (list: TokenBalance[] | undefined): number | null => {
@@ -323,6 +392,112 @@ export class LiveExecutionProvider implements ExecutionProvider {
     };
   }
 
+  /**
+   * Stage 3.5 — resolves ALT-loaded keys and validates the ENTIRE transaction
+   * against the swap whitelist (audit fix #2, CRITICAL). Any failure —
+   * including an unavailable or malformed lookup table — fails closed
+   * BEFORE the wallet key ever touches the transaction.
+   */
+  private async guardSwapTransaction(
+    tx: VersionedTransaction,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const msg: VersionedMessage = tx.message;
+
+    // Resolve every address lookup table the message references. Without
+    // them, loaded accounts are invisible and the guard would be blind.
+    const altMap = new Map<string, AddressLookupTableAccount>();
+    const lookups =
+      (msg as { addressTableLookups?: Array<{ accountKey: PublicKey }> })
+        .addressTableLookups ?? [];
+    for (const lk of lookups) {
+      const key = lk.accountKey.toBase58();
+      const raw = await this.deps.rpc.getAddressLookupTable(key);
+      if (!raw) {
+        return { ok: false, reason: `LOOKUP_TABLE_UNAVAILABLE:${key}` };
+      }
+      try {
+        const state = AddressLookupTableAccount.deserialize(
+          Buffer.from(raw.data, 'base64'),
+        );
+        altMap.set(key, new AddressLookupTableAccount({ key: lk.accountKey, state }));
+      } catch {
+        return { ok: false, reason: `LOOKUP_TABLE_MALFORMED:${key}` };
+      }
+    }
+
+    // Full resolved key list + compiled instructions. Rebuilt here per the
+    // wire protocol (static keys, then each lookup's referenced writable and
+    // readonly addresses IN WIRE ORDER) instead of relying on
+    // message.getAccountKeys — whose lookup-table argument shape has churned
+    // across web3.js versions.
+    interface CompiledIxn {
+      programIdIndex: number;
+      accountKeyIndexes: number[];
+      data: Uint8Array;
+    }
+    const anyMsg = msg as unknown as {
+      header: { numRequiredSignatures: number };
+      staticAccountKeys?: PublicKey[];
+      accountKeys?: PublicKey[];
+      addressTableLookups?: Array<{
+        accountKey: PublicKey;
+        writableIndexes: number[];
+        readonlyIndexes: number[];
+      }>;
+      compiledInstructions?: CompiledIxn[];
+      instructions?: CompiledIxn[];
+    };
+    const isV0 = Array.isArray(anyMsg.staticAccountKeys);
+    const staticSource: PublicKey[] = isV0
+      ? anyMsg.staticAccountKeys ?? []
+      : anyMsg.accountKeys ?? [];
+    const keys: string[] = staticSource.map((k) => k.toBase58());
+    if (isV0) {
+      for (const lookup of anyMsg.addressTableLookups ?? []) {
+        const lkKey = lookup.accountKey.toBase58();
+        const table = altMap.get(lkKey);
+        if (!table) {
+          return { ok: false, reason: `LOOKUP_TABLE_UNAVAILABLE:${lkKey}` };
+        }
+        const addresses = table.state.addresses;
+        for (const idx of [...lookup.writableIndexes, ...lookup.readonlyIndexes]) {
+          if (!Number.isInteger(idx) || idx < 0 || idx >= addresses.length) {
+            return { ok: false, reason: `LOOKUP_TABLE_INDEX_OUT_OF_BOUNDS:${lkKey}:${idx}` };
+          }
+          keys.push(addresses[idx].toBase58());
+        }
+      }
+    }
+    const compiled: CompiledIxn[] = (
+      isV0 ? anyMsg.compiledInstructions : anyMsg.instructions
+    ) ?? [];
+
+    // Index sanity first — a bad index must fail closed, not alias.
+    const instructions: SwapInstruction[] = [];
+    for (const c of compiled) {
+      if (c.programIdIndex < 0 || c.programIdIndex >= keys.length) {
+        return { ok: false, reason: `ACCOUNT_INDEX_OUT_OF_BOUNDS:${c.programIdIndex}` };
+      }
+      for (const a of c.accountKeyIndexes) {
+        if (a < 0 || a >= keys.length) {
+          return { ok: false, reason: `ACCOUNT_INDEX_OUT_OF_BOUNDS:${a}` };
+        }
+      }
+      instructions.push({
+        programId: keys[c.programIdIndex],
+        accounts: c.accountKeyIndexes,
+        data: c.data,
+      });
+    }
+
+    return validateSwapTxShape({
+      walletAddress: this.deps.wallet.publicKey.toBase58(),
+      keys,
+      numRequiredSignatures: anyMsg.header.numRequiredSignatures,
+      instructions,
+    });
+  }
+
   private async getTokenDecimals(mint: string): Promise<number | null> {
     const cached = this.decimalsCache.get(mint);
     if (cached !== undefined) return cached;
@@ -357,11 +532,19 @@ export function parseWalletKey(raw: string): Keypair {
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-function fractionToBps(pct: string): number | null {
-  if (!pct || pct === '' || pct === '0') return 0;
-  const f = Number(pct);
-  if (!Number.isFinite(f)) return null;
-  return Math.round(f * 10_000);
+/**
+ * Parses the quote's priceImpactPct (a decimal fraction string, "0.005" =
+ * 0.5%). Strict (audit fix #1): absent/empty/unparseable → null, which the
+ * caller treats as FAIL-CLOSED. Adverse impact is the absolute value — a
+ * negative number is a price improvement, not a pass.
+ */
+function parsePriceImpactBps(raw: string): number | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (s === '') return null; // "not computed" is NOT evidence of safety
+  const f = Number(s);
+  if (!Number.isFinite(f)) return null; // "NaN"/junk → no evidence
+  return Math.round(Math.abs(f) * 10_000);
 }
 
 function statusRank(s: string | null): number {
@@ -385,6 +568,8 @@ interface TokenBalance {
 interface LiveTransaction {
   meta?: {
     err?: unknown;
+    /** Total tx fee in lamports (base + priority). Required for fill math. */
+    fee?: number;
     preBalances?: number[];
     postBalances?: number[];
     preTokenBalances?: TokenBalance[];

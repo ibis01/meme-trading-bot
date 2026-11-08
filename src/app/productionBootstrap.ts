@@ -212,6 +212,7 @@ export function buildProductionApp(): ProductionApp {
       dailyBudgetUsd: config.DEBATE_DAILY_BUDGET_USD,
       failureBreakerThreshold: config.DEBATE_FAILURE_BREAKER_THRESHOLD,
       failureBreakerOpenMs: config.DEBATE_FAILURE_BREAKER_OPEN_MS,
+      claimLeaseMs: config.DEBATE_CLAIM_LEASE_MS,
       costPer1kInputUsd: config.LLM_COST_PER_1K_INPUT_USD,
       costPer1kOutputUsd: config.LLM_COST_PER_1K_OUTPUT_USD,
     });

@@ -33,8 +33,14 @@ import {
  *   - Judge output is zod-validated; invalid → INVALID (data, not an opinion).
  *   - Row persisted for COMPLETED / UNAVAILABLE / INVALID. SKIPPED when a
  *     breaker/cap is open (no row, no spend).
- *   - Idempotency: UNIQUE(signal_id, mode). A re-processed signal returns the
- *     cached result without re-spending.
+ *   - Idempotency (two layers, audit 2026-11-08 fix #4/#5):
+ *       (a) cache: a persisted verdict for (signal_id, mode) → CACHED;
+ *       (b) claim: an exclusive store lease before ANY LLM call. Concurrent
+ *           workers never double-spend: the loser skips with zero calls and
+ *           the winner releases the lease only after persisting.
+ *     EVERY store interaction (lookup, claim, save, release) is behind
+ *     fail-open error handling: a database outage can NEVER throw out of
+ *     advise() — it degrades to SKIPPED/UNAVAILABLE with shouldVeto=false.
  *   - Veto: only in advise mode, only when kind=COMPLETED, stance != SUPPORT,
  *     vetoRecommended=true, confidence >= threshold.
  */
@@ -55,6 +61,10 @@ export interface DebateConfig {
   /** Cost per 1M tokens, used for the daily-budget estimate. Optional. */
   costPer1kInputUsd?: number;
   costPer1kOutputUsd?: number;
+  /** Exclusive-claim lease before spending (audit fix #5). Must exceed the
+   * worst-case debate duration (3 × perCallTimeoutMs) so a live worker is
+   * never raced; expired leases are stolen by the next caller. */
+  claimLeaseMs: number;
 }
 
 export interface DebateAdviseInput {
@@ -106,13 +116,66 @@ export class DebateService implements DebateAdvisor {
   ) {}
 
   async advise(input: DebateAdviseInput): Promise<DebateResult> {
-    // Idempotency: if we already debated this signal in this mode, return the
-    // cached outcome without re-spending.
-    const cached = await this.store.getBySignal(input.signal.id, this.cfg.mode);
+    // ── Layer 1 idempotency: cached verdict (audit fix #4: the lookup is
+    // inside fail-open handling — a DB outage can never throw out of here).
+    let cached: DebateVerdictRow | null = null;
+    try {
+      cached = await this.store.getBySignal(input.signal.id, this.cfg.mode);
+    } catch (err) {
+      logger.error(
+        { event: 'DEBATE_STORE_LOOKUP_FAILED', signalId: input.signal.id, err },
+        'Verdict lookup failed — failing open to SKIPPED (no spend, no throw)',
+      );
+      return { kind: 'SKIPPED', shouldVeto: false, reason: 'STORE_LOOKUP_FAILED' };
+    }
     if (cached) {
       return cachedResult(cached, this.cfg);
     }
 
+    // ── Layer 2 idempotency: exclusive claim BEFORE any LLM spend.
+    let claim: { acquired: boolean; token: string | null };
+    try {
+      claim = await this.store.tryClaim(
+        input.signal.id,
+        this.cfg.mode,
+        this.cfg.claimLeaseMs,
+        this.now(),
+      );
+    } catch (err) {
+      logger.error(
+        { event: 'DEBATE_STORE_CLAIM_FAILED', signalId: input.signal.id, err },
+        'Claim acquisition failed — failing open to SKIPPED (no spend, no throw)',
+      );
+      return { kind: 'SKIPPED', shouldVeto: false, reason: 'STORE_CLAIM_FAILED' };
+    }
+    if (!claim.acquired || claim.token === null) {
+      // Another worker is running this exact debate. Their verdict will be
+      // persisted under the same (signal_id, mode) — do NOT spend.
+      logger.warn(
+        { event: 'DEBATE_CLAIM_HELD', signalId: input.signal.id },
+        'Debate skipped — another worker holds the claim for this signal',
+      );
+      return { kind: 'SKIPPED', shouldVeto: false, reason: 'DEBATE_IN_PROGRESS' };
+    }
+
+    try {
+      return await this.runDebate(input);
+    } finally {
+      // Release ONLY after the outcome was persisted (all runDebate exits
+      // persist first). If release itself fails the lease simply expires —
+      // never fatal, never thrown.
+      try {
+        await this.store.releaseClaim(input.signal.id, this.cfg.mode, claim.token);
+      } catch (releaseErr) {
+        logger.warn(
+          { event: 'DEBATE_CLAIM_RELEASE_FAILED', signalId: input.signal.id, releaseErr },
+          'Claim release failed — lease will expire on its own',
+        );
+      }
+    }
+  }
+
+  private async runDebate(input: DebateAdviseInput): Promise<DebateResult> {
     const now = this.now();
 
     // UTC-day rollover for daily caps.

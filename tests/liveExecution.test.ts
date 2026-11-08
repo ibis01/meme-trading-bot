@@ -1,19 +1,35 @@
-import { Keypair, VersionedTransaction, TransactionMessage } from '@solana/web3.js';
+import {
+  AddressLookupTableAccount,
+  ComputeBudgetProgram,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+} from '@solana/web3.js';
 import bs58 from 'bs58';
 import { LiveExecutionProvider, parseWalletKey } from '../src/execution/live';
 import { JupiterClient } from '../src/execution/jupiter';
 import { SolanaRpcClient } from '../src/data/solanaRpc';
 import { ExecutionRequest } from '../src/execution/types';
+import {
+  JUPITER_V6_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  ATA_PROGRAM_ID,
+  LOOKUP_TABLE_PROGRAM_ID,
+  WSOL_MINT,
+  RENT_EXEMPT_TOKEN_ACCOUNT_LAMPORTS,
+} from '../src/execution/txGuard';
 
 /**
- * LiveExecutionProvider contract (Rule 11 pipeline + Rule 27 failure modes).
- * Everything is fetch-mocked — no network, no real funds, no real LLM/RPC.
- *
- * Covered: happy-path BUY with REAL fill amounts derived from on-chain deltas,
- * price-impact gate, simulation rejection, send rejected by RPC, send network
- * throw → UNKNOWN, confirm timeout → SUBMITTED, on-chain failure → FAILED,
- * verify unavailability → UNKNOWN, SELL path with decimals, unsafe raw
- * amounts, quote staleness, wallet key parsing.
+ * LiveExecutionProvider contract (Rule 11 pipeline + Rule 27 failure modes)
+ * PLUS the adversarial suite for the 2026-11-08 security audit:
+ *   #1 price-impact evidence missing/malformed → FAIL CLOSED
+ *   #2 untrusted swap tx → instruction/signer/fee-payer guard before signing
+ *   #3 SOL fill accounting excludes tx fee + rent locked in new accounts
+ *   #6 quote freshness rechecked immediately before submit
+ * Everything is fetch-mocked — no network, no real funds.
  */
 
 jest.mock('../src/config', () => ({
@@ -31,13 +47,85 @@ const TOKEN_DECIMALS = 6;
 const SIG = '5VERhB9ZBiUB9aC83hRcKpvUghhjf3ZbPdA5rGxqnAmHarYeDXTAvDkqXMCGxMduDkUCw6oX5HeEMVT4rnHgNqU7';
 
 const wallet = Keypair.generate();
+const attacker = Keypair.generate();
+const TOKEN_PROGRAM_PK = new PublicKey(TOKEN_PROGRAM_ID);
+const ATA_PROGRAM_PK = new PublicKey(ATA_PROGRAM_ID);
+const JUPITER_PK = new PublicKey(JUPITER_V6_PROGRAM_ID);
+const MINT_PK = Keypair.generate().publicKey; // valid base58 key for tx building
 
-/** A genuine unsigned versioned tx (payer = the provider wallet) for Jupiter to "return". */
-function buildSwapTxB64(): string {
+const FEE_LAMPORTS = 5_000;
+
+// ── Canonical Jupiter-shaped instruction builders ────────────────────────
+
+/** Token Program closeAccount (hand-rolled). */
+function closeAccountIx(account: PublicKey, destination: PublicKey, authority: PublicKey): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: TOKEN_PROGRAM_PK,
+    keys: [
+      { pubkey: account, isSigner: false, isWritable: true },
+      { pubkey: destination, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data: Buffer.from([9]),
+  });
+}
+
+/** Associated Token Program create/createIdempotent (hand-rolled). */
+function ataCreateIx(
+  funding: PublicKey,
+  ata: PublicKey,
+  owner: PublicKey,
+  mint: PublicKey,
+  idempotent = false,
+  funderSigns = true,
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: ATA_PROGRAM_PK,
+    keys: [
+      { pubkey: funding, isSigner: funderSigns, isWritable: true },
+      { pubkey: ata, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_PK, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from([idempotent ? 1 : 0]),
+  });
+}
+
+function jupiterSwapIx(extraKeys: TransactionInstruction['keys'] = []): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: JUPITER_PK,
+    keys: [
+      { pubkey: wallet.publicKey, isSigner: true, isWritable: true },
+      ...extraKeys,
+    ],
+    data: Buffer.from([0]),
+  });
+}
+
+/**
+ * A REALISTIC unsigned Jupiter v6 swap for a SOL-input BUY (payer = the
+ * provider wallet): compute budget → idempotent create of the wallet's wSOL
+ * ATA → Jupiter swap → closeAccount back to the wallet (the unwrap).
+ * NOTE: no System Program createAccount — that instruction requires the new
+ * account itself to sign, which a /swap response can never provide.
+ */
+function canonicalJupiterIxs(): TransactionInstruction[] {
+  const wsolAta = Keypair.generate().publicKey; // PDA-style address
+  return [
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+    ataCreateIx(wallet.publicKey, wsolAta, wallet.publicKey, new PublicKey(WSOL_MINT), true),
+    jupiterSwapIx(),
+    closeAccountIx(wsolAta, wallet.publicKey, wallet.publicKey),
+  ];
+}
+
+function buildSwapTxB64(ixs?: TransactionInstruction[]): string {
   const msg = new TransactionMessage({
     payerKey: wallet.publicKey,
     recentBlockhash: '11111111111111111111111111111111',
-    instructions: [],
+    instructions: ixs ?? canonicalJupiterIxs(),
   }).compileToV0Message();
   return Buffer.from(new VersionedTransaction(msg).serialize()).toString('base64');
 }
@@ -86,18 +174,23 @@ const goodQuoteBody = {
   routePlan: [],
 };
 
-function goodSwapBody(): Record<string, unknown> {
-  return { swapTransaction: buildSwapTxB64(), lastValidBlockHeight: 12345 };
+function goodSwapBody(ixs?: TransactionInstruction[]): Record<string, unknown> {
+  return { swapTransaction: buildSwapTxB64(ixs), lastValidBlockHeight: 12345 };
 }
 
-/** Confirmed tx json with balance deltas for a BUY of 1.5M tokens for 0.05 SOL. */
+/**
+ * Confirmed tx json for a BUY of 1.5M tokens for 0.05 SOL.
+ * Fee (5k lamports) is charged ON TOP of the wrap: wallet delta
+ * = -(50_000_000 + 5_000). accountKeys/preBalances/postBalances all have
+ * 3 entries — jsonParsed always keeps them aligned.
+ */
 function confirmedBuyTx() {
   return {
     meta: {
       err: null,
-      // Wallet is index 0. Spent 50_000_000 lamports (includes fees).
-      preBalances: [1_000_000_000, 500_000_000_000],
-      postBalances: [950_000_000, 500_000_000_000],
+      fee: FEE_LAMPORTS,
+      preBalances: [1_000_000_000, 500_000_000_000, RENT_EXEMPT_TOKEN_ACCOUNT_LAMPORTS],
+      postBalances: [949_995_000, 500_000_000_000, RENT_EXEMPT_TOKEN_ACCOUNT_LAMPORTS],
       preTokenBalances: [
         { accountIndex: 2, mint: MINT, owner: wallet.publicKey.toBase58(), uiTokenAmount: { amount: '0' } },
       ],
@@ -150,8 +243,71 @@ const baseRpc = {
   getTransaction: () => confirmedBuyTx(),
 };
 
+async function expectGuardRejection(
+  ixs: TransactionInstruction[],
+  expectedReason: string,
+): Promise<void> {
+  const send = jest.fn(() => SIG);
+  const provider = makeProvider(
+    { ...baseRpc, sendTransaction: send as unknown as RpcHandler },
+    {
+      quote: () => ({ status: 200, body: goodQuoteBody }),
+      swap: () => ({ status: 200, body: goodSwapBody(ixs) }),
+    },
+  );
+  const out = await provider.execute(makeReq());
+  expect(out.status).toBe('FAILED');
+  expect(out.error).toBe(`TX_GUARD_REJECTED:${expectedReason}`);
+  expect(send).not.toHaveBeenCalled();
+}
+
+/**
+ * Serializes lookup-table account data by hand (web3.js 1.99 exposes no
+ * serialize helper). Layout per AddressLookupTableAccount.deserialize:
+ *   [0..3] u32 typeIndex · [4..11] u64 deactivationSlot · [12..19] u64
+ *   lastExtendedSlot · [20] u8 startIndex · [21] u8 authority-option flag ·
+ *   [22..53] authority pubkey · [54..55] padding · [56..] addresses (32 B
+ *   each, no length prefix).
+ */
+function serializeAlt(state: {
+  deactivationSlot: bigint;
+  lastExtendedSlot: number;
+  lastExtendedSlotStartIndex: number;
+  authority?: PublicKey;
+  addresses: PublicKey[];
+}): Buffer {
+  const buf = Buffer.alloc(56 + state.addresses.length * 32);
+  buf.writeUInt32LE(1, 0); // lookup-table account type discriminator
+  buf.writeBigUInt64LE(BigInt(state.deactivationSlot), 4);
+  buf.writeBigUInt64LE(BigInt(state.lastExtendedSlot), 12);
+  buf.writeUInt8(state.lastExtendedSlotStartIndex, 20);
+  if (state.authority) {
+    buf.writeUInt8(1, 21);
+    Buffer.from(state.authority.toBytes()).copy(buf, 22);
+  } else {
+    buf.writeUInt8(0, 21);
+  }
+  state.addresses.forEach((a, i) => Buffer.from(a.toBytes()).copy(buf, 56 + i * 32));
+  return buf;
+}
+
+function makeAlt(): AddressLookupTableAccount {
+  return new AddressLookupTableAccount({
+    key: Keypair.generate().publicKey,
+    state: {
+      deactivationSlot: BigInt('18446744073709551615'),
+      lastExtendedSlot: 0,
+      lastExtendedSlotStartIndex: 0,
+      authority: wallet.publicKey,
+      addresses: [MINT_PK],
+    },
+  });
+}
+
+// ── Core pipeline ────────────────────────────────────────────────────────
+
 describe('LiveExecutionProvider (Rule 11 pipeline)', () => {
-  it('happy-path BUY: confirms and derives REAL fill amounts from on-chain deltas', async () => {
+  it('happy-path BUY: canonical Jupiter tx passes the guard, confirms with REAL on-chain fill amounts', async () => {
     const provider = makeProvider(baseRpc, {
       quote: () => ({ status: 200, body: goodQuoteBody }),
       swap: () => ({ status: 200, body: goodSwapBody() }),
@@ -160,10 +316,57 @@ describe('LiveExecutionProvider (Rule 11 pipeline)', () => {
 
     expect(out.status).toBe('CONFIRMED');
     expect(out.txSignature).toBe(SIG);
-    // SOL spent: pre 1_000_000_000 - post 950_000_000 = 50_000_000 lamports = 0.05 SOL.
+    // adjusted delta = (949_995_000 − 1_000_000_000) + 5_000 fee = −50_000_000.
     expect(out.filledAmountSol).toBeCloseTo(0.05, 9);
-    // Tokens received: 1_500_000_000_000 raw / 10^6 = 1_500_000 human units.
     expect(out.filledTokenAmount).toBeCloseTo(1_500_000, 4);
+  });
+
+  it('audit #3: rent locked in a newly created ATA is EXCLUDED from the SOL fill', async () => {
+    const tx = confirmedBuyTx();
+    // The wallet also funded a brand-new output ATA (pre 0 → post 2_039_280):
+    // raw delta would read 0.05204428 SOL spent; the fill must be 0.05.
+    tx.meta.preBalances = [1_000_000_000, 500_000_000_000, 0];
+    tx.meta.postBalances = [947_955_720, 500_000_000_000, RENT_EXEMPT_TOKEN_ACCOUNT_LAMPORTS];
+    const provider = makeProvider(
+      { ...baseRpc, getTransaction: () => tx },
+      {
+        quote: () => ({ status: 200, body: goodQuoteBody }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('CONFIRMED');
+    expect(out.filledAmountSol).toBeCloseTo(0.05, 9);
+  });
+
+  it('audit #3: meta.fee missing → UNKNOWN (never book unverified fills)', async () => {
+    const tx = confirmedBuyTx();
+    delete (tx.meta as Record<string, unknown>).fee;
+    const provider = makeProvider(
+      { ...baseRpc, getTransaction: () => tx },
+      {
+        quote: () => ({ status: 200, body: goodQuoteBody }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('UNKNOWN');
+    expect(out.error).toBe('VERIFY_BALANCES_MISSING');
+  });
+
+  it('audit #3: balance/accountKeys length mismatch → UNKNOWN (fail closed)', async () => {
+    const tx = confirmedBuyTx();
+    tx.meta.postBalances = tx.meta.postBalances.slice(0, 2); // keys has 3
+    const provider = makeProvider(
+      { ...baseRpc, getTransaction: () => tx },
+      {
+        quote: () => ({ status: 200, body: goodQuoteBody }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('UNKNOWN');
+    expect(out.error).toBe('VERIFY_BALANCES_MISSING');
   });
 
   it('quote price impact above the gate → FAILED pre-submit, no send attempted', async () => {
@@ -180,6 +383,91 @@ describe('LiveExecutionProvider (Rule 11 pipeline)', () => {
     expect(out.error).toContain('PRICE_IMPACT_EXCEEDED');
     expect(send).not.toHaveBeenCalled();
   });
+
+  // ── Audit #1: price-impact evidence is mandatory (fail closed) ─────────
+
+  it('audit #1: missing price impact (empty string) → FAILED PRICE_IMPACT_UNAVAILABLE', async () => {
+    const send = jest.fn(() => SIG);
+    const provider = makeProvider(
+      { ...baseRpc, sendTransaction: send as unknown as RpcHandler },
+      {
+        quote: () => ({ status: 200, body: { ...goodQuoteBody, priceImpactPct: '' } }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('FAILED');
+    expect(out.error).toBe('PRICE_IMPACT_UNAVAILABLE');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('audit #1: malformed price impact ("NaN") → FAILED PRICE_IMPACT_UNAVAILABLE', async () => {
+    const provider = makeProvider(
+      baseRpc,
+      {
+        quote: () => ({ status: 200, body: { ...goodQuoteBody, priceImpactPct: 'NaN' } }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('FAILED');
+    expect(out.error).toBe('PRICE_IMPACT_UNAVAILABLE');
+  });
+
+  it('audit #1: adversarial negative price impact ("-0.5") is judged by its MAGNITUDE → rejected', async () => {
+    const provider = makeProvider(
+      baseRpc,
+      {
+        quote: () => ({ status: 200, body: { ...goodQuoteBody, priceImpactPct: '-0.5' } }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('FAILED');
+    expect(out.error).toContain('PRICE_IMPACT_EXCEEDED');
+  });
+
+  it('audit #1: a small negative impact (price improvement) still passes the gate', async () => {
+    const provider = makeProvider(
+      baseRpc,
+      {
+        quote: () => ({ status: 200, body: { ...goodQuoteBody, priceImpactPct: '-0.001' } }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('CONFIRMED');
+  });
+
+  // ── Audit #6: quote freshness rechecked immediately before submit ──────
+
+  it('audit #6: quote expires during simulation → QUOTE_STALE_AT_SUBMIT, no send', async () => {
+    const clock: Ctx = { t: 1_000_000 };
+    const send = jest.fn(() => SIG);
+    const provider = new LiveExecutionProvider({
+      jupiter: new JupiterClient('https://quote-api.jup.ag/v6', jupiterFetch({
+        quote: () => ({ status: 200, body: goodQuoteBody }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      })),
+      rpc: new SolanaRpcClient('https://rpc.example.com', rpcFetch({
+        ...baseRpc,
+        simulateTransaction: () => { clock.t += 6_000; return { value: { err: null, logs: [] } }; }, // sim burns the budget
+        sendTransaction: send as unknown as RpcHandler,
+      })),
+      wallet,
+      maxQuoteAgeMs: 5_000,
+      confirmTimeoutMs: 60_000,
+      confirmPollMs: 2_000,
+      now: () => clock.t,
+      sleepImpl: async (ms) => { clock.t += ms; },
+    });
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('FAILED');
+    expect(out.error).toBe('QUOTE_STALE_AT_SUBMIT');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  // ── Existing failure-mode mapping (unchanged) ───────────────────────────
 
   it('simulation rejected → FAILED pre-submit, no send attempted', async () => {
     const send = jest.fn(() => SIG);
@@ -310,13 +598,15 @@ describe('LiveExecutionProvider (Rule 11 pipeline)', () => {
     expect(out.error).toBe('UNUSABLE_FILL_AMOUNTS');
   });
 
-  it('SELL path: fetches decimals, sells the exact raw amount, derives SOL received', async () => {
+  it('SELL path: fetches decimals, sells the exact raw amount, derives SOL received (fee-adjusted)', async () => {
     const supplyCalls: unknown[][] = [];
     const sellTx = {
       meta: {
         err: null,
-        preBalances: [1_000_000_000, 500_000_000_000],
-        postBalances: [1_030_000_000, 500_000_000_000], // received 0.03 SOL
+        fee: FEE_LAMPORTS,
+        // Received 0.03 SOL on-chain; wallet delta = +29_995_000 (fee on top).
+        preBalances: [1_000_000_000, 500_000_000_000, RENT_EXEMPT_TOKEN_ACCOUNT_LAMPORTS],
+        postBalances: [1_029_995_000, 500_000_000_000, RENT_EXEMPT_TOKEN_ACCOUNT_LAMPORTS],
         preTokenBalances: [
           { accountIndex: 2, mint: MINT, owner: wallet.publicKey.toBase58(), uiTokenAmount: { amount: '1500000000' } },
         ],
@@ -337,12 +627,10 @@ describe('LiveExecutionProvider (Rule 11 pipeline)', () => {
         },
       },
       {
-        // The quote call is spied below — this handler is a safety net.
         quote: () => ({ status: 500, body: 'should not be called' }),
         swap: () => ({ status: 200, body: goodSwapBody() }),
       },
     );
-    // Intercept the quote to capture the requested raw amount.
     const jupQuoteSpy = jest.spyOn(JupiterClient.prototype, 'getQuote').mockImplementation(async function (
       this: JupiterClient,
       req: { amountRaw: string; inputMint: string; outputMint: string },
@@ -364,7 +652,6 @@ describe('LiveExecutionProvider (Rule 11 pipeline)', () => {
     expect(out.status).toBe('CONFIRMED');
     expect(supplyCalls).toHaveLength(1);
     expect(supplyCalls[0][0]).toBe(MINT);
-    // 1500 human tokens @ 6 decimals = 1_500_000_000 raw.
     expect(soldRaw).toBe('1500000000');
     expect(out.filledAmountSol).toBeCloseTo(0.03, 9);
     expect(out.filledTokenAmount).toBeCloseTo(1500, 6);
@@ -429,6 +716,235 @@ describe('LiveExecutionProvider (Rule 11 pipeline)', () => {
     const provider = makeProvider(baseRpc, {});
     // config mock says TRADING_MODE=live but WALLET_PRIVATE_KEY is absent → throws.
     expect(() => provider.assertEnabled()).toThrow('LIVE_PROVIDER_MISSING_WALLET_PRIVATE_KEY');
+  });
+});
+
+// ── Audit #2: the swap-tx guard (untrusted transaction, fail closed) ─────
+
+describe('Swap transaction guard (audit #2 — never sign untrusted instructions)', () => {
+  it('canonical Jupiter tx with ALT-loaded accounts passes and confirms', async () => {
+    // A v0 message whose Jupiter-route account lives inside a lookup table
+    // — the guard must resolve the ALT via RPC and validate the loaded keys.
+    const alt = makeAlt();
+    const wsolAta = Keypair.generate().publicKey;
+    const ixs = [
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+      ataCreateIx(wallet.publicKey, wsolAta, wallet.publicKey, new PublicKey(WSOL_MINT), true),
+      jupiterSwapIx([{ pubkey: MINT_PK, isSigner: false, isWritable: true }]), // lives in the ALT
+      closeAccountIx(wsolAta, wallet.publicKey, wallet.publicKey),
+    ];
+    const { MessageV0 } = await import('@solana/web3.js');
+    const v0 = MessageV0.compile({
+      payerKey: wallet.publicKey,
+      recentBlockhash: '11111111111111111111111111111111',
+      instructions: ixs,
+      addressLookupTableAccounts: [alt],
+    });
+    const altB64 = serializeAlt(alt.state).toString('base64');
+    const provider = makeProvider(
+      {
+        ...baseRpc,
+        getAccountInfo: () => ({
+          value: { data: [altB64, 'base64'], owner: LOOKUP_TABLE_PROGRAM_ID, lamports: 0, executable: false },
+        }),
+      },
+      {
+        quote: () => ({ status: 200, body: goodQuoteBody }),
+        swap: () => ({
+          status: 200,
+          body: { swapTransaction: Buffer.from(new VersionedTransaction(v0).serialize()).toString('base64'), lastValidBlockHeight: 12345 },
+        }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('CONFIRMED');
+  });
+
+  it('audit #2: ALT unavailable → FAILED LOOKUP_TABLE_UNAVAILABLE, nothing signed', async () => {
+    const alt = makeAlt();
+    const { MessageV0 } = await import('@solana/web3.js');
+    const v0 = MessageV0.compile({
+      payerKey: wallet.publicKey,
+      recentBlockhash: '11111111111111111111111111111111',
+      instructions: [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        jupiterSwapIx([{ pubkey: MINT_PK, isSigner: false, isWritable: true }]),
+      ],
+      addressLookupTableAccounts: [alt],
+    });
+    const provider = makeProvider(
+      { ...baseRpc, getAccountInfo: () => null },
+      {
+        quote: () => ({ status: 200, body: goodQuoteBody }),
+        swap: () => ({
+          status: 200,
+          body: { swapTransaction: Buffer.from(new VersionedTransaction(v0).serialize()).toString('base64'), lastValidBlockHeight: 12345 },
+        }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.status).toBe('FAILED');
+    expect(out.error).toContain('TX_GUARD_REJECTED:LOOKUP_TABLE_UNAVAILABLE');
+  });
+
+  it('audit #2: a non-whitelisted program is refused pre-sign', async () => {
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        new TransactionInstruction({
+          programId: attacker.publicKey, // arbitrary program
+          keys: [{ pubkey: wallet.publicKey, isSigner: true, isWritable: true }],
+          data: Buffer.from([0]),
+        }),
+        jupiterSwapIx(),
+      ],
+      `PROGRAM_NOT_PERMITTED:${attacker.publicKey.toBase58()}`,
+    );
+  });
+
+  it('audit #2: fee payer ≠ wallet is refused (no unwitting payment)', async () => {
+    // Exactly ONE required signer (the attacker) — so the header check passes
+    // and the fee-payer check is what catches this forgery. No wallet-signed
+    // instruction at all.
+    const msg = new TransactionMessage({
+      payerKey: attacker.publicKey,
+      recentBlockhash: '11111111111111111111111111111111',
+      instructions: [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        new TransactionInstruction({
+          programId: JUPITER_PK,
+          keys: [{ pubkey: wallet.publicKey, isSigner: false, isWritable: true }],
+          data: Buffer.from([0]),
+        }),
+      ],
+    }).compileToV0Message();
+    const b64 = Buffer.from(new VersionedTransaction(msg).serialize()).toString('base64');
+    const provider = makeProvider(
+      baseRpc,
+      {
+        quote: () => ({ status: 200, body: goodQuoteBody }),
+        swap: () => ({ status: 200, body: { swapTransaction: b64, lastValidBlockHeight: 12345 } }),
+      },
+    );
+    const out = await provider.execute(makeReq());
+    expect(out.error).toBe(`TX_GUARD_REJECTED:FEE_PAYER_NOT_WALLET:${attacker.publicKey.toBase58()}`);
+  });
+
+  it('audit #2: a foreign required signer is refused (no co-signing our funds away)', async () => {
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        jupiterSwapIx([{ pubkey: attacker.publicKey, isSigner: true, isWritable: false }]),
+      ],
+      'MULTIPLE_REQUIRED_SIGNERS:2',
+    );
+  });
+
+  it('audit #2: System transfer (a direct SOL drain) is refused', async () => {
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        SystemProgram.transfer({ fromPubkey: wallet.publicKey, toPubkey: attacker.publicKey, lamports: 50_000_000 }),
+        jupiterSwapIx(),
+      ],
+      'PROGRAM_NOT_PERMITTED:11111111111111111111111111111111',
+    );
+  });
+
+  it('audit #2: System createAccount (requires a second signer — stranded-SOL shape) is refused', async () => {
+    const temp = Keypair.generate();
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        SystemProgram.createAccount({
+          fromPubkey: wallet.publicKey,
+          newAccountPubkey: temp.publicKey, // a required signer we never control
+          space: 165,
+          lamports: 500_000_000,
+          programId: TOKEN_PROGRAM_PK,
+        }),
+        jupiterSwapIx(),
+      ],
+      'MULTIPLE_REQUIRED_SIGNERS:2',
+    );
+  });
+
+  it('audit #2: ATA create with a foreign funder is refused', async () => {
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        ataCreateIx(attacker.publicKey, Keypair.generate().publicKey, wallet.publicKey, MINT_PK, false, false),
+        jupiterSwapIx(),
+      ],
+      `ATA_FUNDER_NOT_WALLET:${attacker.publicKey.toBase58()}`,
+    );
+  });
+
+  it('audit #2: ATA create with a foreign owner is refused', async () => {
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        ataCreateIx(wallet.publicKey, Keypair.generate().publicKey, attacker.publicKey, MINT_PK),
+        jupiterSwapIx(),
+      ],
+      `ATA_OWNER_NOT_WALLET:${attacker.publicKey.toBase58()}`,
+    );
+  });
+
+  it('audit #2: closeAccount on a PRE-EXISTING account (token/rent burn) is refused', async () => {
+    // Same shape as canonical but WITHOUT the idempotent create — so the
+    // closed account was never ensured inside this tx.
+    const preExisting = Keypair.generate().publicKey;
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        jupiterSwapIx(),
+        closeAccountIx(preExisting, wallet.publicKey, wallet.publicKey),
+      ],
+      'TOKEN_CLOSE_TARGET_NOT_CREATED',
+    );
+  });
+
+  it('audit #2: closing a NON-wSOL account even when ensured in-tx is refused', async () => {
+    // A malicious close of a pre-existing MINT-owned ATA dressed up as an
+    // idempotent create of THIS tx — the mint is not wrapped SOL.
+    const target = Keypair.generate().publicKey;
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        ataCreateIx(wallet.publicKey, target, wallet.publicKey, MINT_PK, true),
+        jupiterSwapIx(),
+        closeAccountIx(target, wallet.publicKey, wallet.publicKey),
+      ],
+      'TOKEN_CLOSE_TARGET_NOT_CREATED',
+    );
+  });
+
+  it('audit #2: closeAccount redirecting rent to an attacker is refused', async () => {
+    const wsolAta = Keypair.generate().publicKey;
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        ataCreateIx(wallet.publicKey, wsolAta, wallet.publicKey, new PublicKey(WSOL_MINT), true),
+        jupiterSwapIx(),
+        closeAccountIx(wsolAta, attacker.publicKey, wallet.publicKey), // dest = attacker
+      ],
+      `TOKEN_CLOSE_DEST_NOT_WALLET:${attacker.publicKey.toBase58()}`,
+    );
+  });
+
+  it('audit #2: a tx with no Jupiter instruction is refused', async () => {
+    await expectGuardRejection(
+      [
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ],
+      'NO_JUPITER_INSTRUCTION',
+    );
+  });
+
+  it('audit #2: an empty/legacy-shaped tx is refused', async () => {
+    await expectGuardRejection([], 'INSUFFICIENT_INSTRUCTIONS');
   });
 });
 

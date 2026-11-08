@@ -151,6 +151,7 @@ function baseConfig(overrides: Partial<DebateConfig> = {}): DebateConfig {
     dailyBudgetUsd: 2.0,
     failureBreakerThreshold: 5,
     failureBreakerOpenMs: 15 * 60 * 1000,
+    claimLeaseMs: 60_000,
     ...overrides,
   };
 }
@@ -447,6 +448,100 @@ describe('DebateService', () => {
       // Fail-open to UNAVAILABLE, never a throw.
       expect(['UNAVAILABLE']).toContain(res.kind);
       expect(res.shouldVeto).toBe(false);
+    });
+
+    // Audit fix #4: the ENTIRE debate lifecycle — including the very first
+    // verdict lookup — is inside fail-open handling. A DB outage must never
+    // throw out of advise() and must never reach the LLM.
+    it('audit #4: store.getBySignal throwing → SKIPPED STORE_LOOKUP_FAILED, zero LLM calls, no throw', async () => {
+      const client = new FakeLlmClient({
+        bear: BEAR_OK, bull: BULL_OK, judge: JUDGE_SUPPORT,
+      });
+      const badStore = new InMemoryDebateStore();
+      badStore.getBySignal = jest.fn().mockRejectedValue(new Error('db down'));
+      const service = new DebateService(client, badStore, baseConfig());
+      const res = await service.advise({ signal: makeSignal(), tradeRequestId: 'sig:sig_1', security });
+      expect(res.kind).toBe('SKIPPED');
+      expect(res.reason).toBe('STORE_LOOKUP_FAILED');
+      expect(res.shouldVeto).toBe(false);
+      expect(client.calls).toHaveLength(0); // no spend before the claim
+    });
+
+    it('audit #4: store.tryClaim throwing → SKIPPED STORE_CLAIM_FAILED, zero LLM calls, no throw', async () => {
+      const client = new FakeLlmClient({
+        bear: BEAR_OK, bull: BULL_OK, judge: JUDGE_SUPPORT,
+      });
+      const badStore = new InMemoryDebateStore();
+      badStore.tryClaim = jest.fn().mockRejectedValue(new Error('db down'));
+      const service = new DebateService(client, badStore, baseConfig());
+      const res = await service.advise({ signal: makeSignal(), tradeRequestId: 'sig:sig_1', security });
+      expect(res.kind).toBe('SKIPPED');
+      expect(res.reason).toBe('STORE_CLAIM_FAILED');
+      expect(res.shouldVeto).toBe(false);
+      expect(client.calls).toHaveLength(0);
+    });
+  });
+
+  describe('claim-based idempotency (audit fix #5 — no concurrent double-spend)', () => {
+    it('two concurrent advise() calls for the same signal → exactly ONE runs the protocol', async () => {
+      const client = new FakeLlmClient({
+        bear: BEAR_OK, bull: BULL_OK, judge: JUDGE_SUPPORT,
+      });
+      // Add latency so both callers truly overlap in the claim window.
+      const slowClient: LlmClient = {
+        async chat(req) {
+          await new Promise((r) => setTimeout(r, 10));
+          return client.chat(req);
+        },
+      };
+      const { service, store } = makeService(slowClient);
+      const signal = makeSignal();
+      const [a, b] = await Promise.all([
+        service.advise({ signal, tradeRequestId: 'sig:sig_1', security }),
+        service.advise({ signal, tradeRequestId: 'sig:sig_1', security }),
+      ]);
+
+      const kinds = [a.kind, b.kind].sort();
+      expect(kinds).toEqual(['COMPLETED', 'SKIPPED']);
+      const skipped = a.kind === 'SKIPPED' ? a : b;
+      expect(skipped.reason).toBe('DEBATE_IN_PROGRESS');
+      expect(skipped.shouldVeto).toBe(false);
+      // Exactly one debate's worth of LLM spend — the audit's core demand.
+      expect(client.calls).toHaveLength(3);
+      // The claim was released after the debate completed.
+      expect(store.claimCount()).toBe(0);
+    });
+
+    it('re-advise after a completed debate still returns CACHED (cache layer intact)', async () => {
+      const client = new FakeLlmClient({
+        bear: BEAR_OK, bull: BULL_OK, judge: JUDGE_SUPPORT,
+      });
+      const { service } = makeService(client);
+      await service.advise({ signal: makeSignal(), tradeRequestId: 'sig:sig_1', security });
+      const res = await service.advise({ signal: makeSignal(), tradeRequestId: 'sig:sig_1', security });
+      expect(res.kind).toBe('CACHED');
+      expect(client.calls).toHaveLength(3);
+    });
+
+    it('an expired lease (crashed worker) is stolen by the next caller', async () => {
+      let t = 1_000_000;
+      const client = new FakeLlmClient({
+        bear: BEAR_OK, bull: BULL_OK, judge: JUDGE_SUPPORT,
+      });
+      const { service, store } = makeService(client, baseConfig({ claimLeaseMs: 5_000 }), () => t);
+
+      // First debate claims and releases cleanly.
+      const r1 = await service.advise({ signal: makeSignal('s1'), tradeRequestId: 'sig:s1', security });
+      expect(r1.kind).toBe('COMPLETED');
+      expect(store.claimCount()).toBe(0);
+
+      // Simulate a crashed worker holding a stale claim.
+      const { token } = await store.tryClaim('s2', 'advise', 5_000, t);
+      expect(token).not.toBeNull();
+      t += 6_000; // lease expires
+      const r2 = await service.advise({ signal: makeSignal('s2'), tradeRequestId: 'sig:s2', security });
+      expect(r2.kind).toBe('COMPLETED'); // stolen and debated
+      expect(client.calls).toHaveLength(6); // 3 (s1) + 3 (s2 after the steal)
     });
   });
 });

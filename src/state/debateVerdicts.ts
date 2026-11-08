@@ -43,10 +43,27 @@ export interface DebateVerdictStore {
   save(row: DebateVerdictRow): Promise<void>;
   /** For tests + idempotency checks. */
   getBySignal(signalId: string, mode: DebateMode): Promise<DebateVerdictRow | null>;
+  /**
+   * Claim-based idempotency (audit fix #5): acquire the EXCLUSIVE right to
+   * run the debate for (signalId, mode). 'acquired=false' means another
+   * worker holds a live lease — the caller must skip without spending.
+   * Expired leases (crashed workers) are stolen atomically inside the
+   * store. Returns a token that MUST be passed to releaseClaim.
+   */
+  tryClaim(
+    signalId: string,
+    mode: DebateMode,
+    leaseMs: number,
+    nowMs: number,
+  ): Promise<{ acquired: boolean; token: string | null }>;
+  /** Release our own claim after the verdict row is persisted. Non-owning
+   * tokens are ignored. */
+  releaseClaim(signalId: string, mode: DebateMode, token: string): Promise<boolean>;
 }
 
 export class InMemoryDebateStore implements DebateVerdictStore {
   private readonly rows = new Map<string, DebateVerdictRow>();
+  private readonly claims = new Map<string, { ownerId: string; expiresAt: number }>();
 
   private key(signalId: string, mode: DebateMode): string {
     return `${mode}:${signalId}`;
@@ -62,6 +79,36 @@ export class InMemoryDebateStore implements DebateVerdictStore {
     mode: DebateMode,
   ): Promise<DebateVerdictRow | null> {
     return this.rows.get(this.key(signalId, mode)) ?? null;
+  }
+
+  async tryClaim(
+    signalId: string,
+    mode: DebateMode,
+    leaseMs: number,
+    nowMs: number,
+  ): Promise<{ acquired: boolean; token: string | null }> {
+    const k = this.key(signalId, mode);
+    const existing = this.claims.get(k);
+    if (existing && existing.expiresAt > nowMs) {
+      return { acquired: false, token: null };
+    }
+    // Fresh claim or atomic steal of an expired lease.
+    const token = randomUUID();
+    this.claims.set(k, { ownerId: token, expiresAt: nowMs + leaseMs });
+    return { acquired: true, token };
+  }
+
+  async releaseClaim(signalId: string, mode: DebateMode, token: string): Promise<boolean> {
+    const k = this.key(signalId, mode);
+    const claim = this.claims.get(k);
+    if (!claim || claim.ownerId !== token) return false;
+    this.claims.delete(k);
+    return true;
+  }
+
+  /** Test hook: number of live claims. */
+  claimCount(): number {
+    return this.claims.size;
   }
 }
 
@@ -110,6 +157,49 @@ export class PostgresDebateStore implements DebateVerdictStore {
     );
     if (res.rows.length === 0) return null;
     return mapRow(res.rows[0]);
+  }
+
+  async tryClaim(
+    signalId: string,
+    mode: DebateMode,
+    leaseMs: number,
+    _nowMs: number,
+  ): Promise<{ acquired: boolean; token: string | null }> {
+    // Single atomic round trip: try INSERT; on conflict try to steal an
+    // EXPIRED lease. A fresh lease is never visible to the steal CTE's
+    // snapshot, so a live holder can never be raced out of its claim.
+    const res = await this.pool.query(
+      `WITH ins AS (
+         INSERT INTO debate_claims (signal_id, mode, owner_id, lease_expires_at)
+         VALUES ($1, $2, gen_random_uuid(), NOW() + make_interval(secs => $3::double precision / 1000.0))
+         ON CONFLICT (signal_id, mode) DO NOTHING
+         RETURNING owner_id
+       ), steal AS (
+         UPDATE debate_claims
+            SET owner_id = gen_random_uuid(),
+                claimed_at = NOW(),
+                lease_expires_at = NOW() + make_interval(secs => $3::double precision / 1000.0)
+          WHERE signal_id = $1
+            AND mode = $2
+            AND lease_expires_at < NOW()
+         RETURNING owner_id
+       )
+       SELECT owner_id FROM ins
+       UNION ALL
+       SELECT owner_id FROM steal
+       LIMIT 1`,
+      [signalId, mode, leaseMs],
+    );
+    const ownerId = res.rows.length > 0 ? String(res.rows[0].owner_id) : null;
+    return { acquired: ownerId !== null, token: ownerId };
+  }
+
+  async releaseClaim(signalId: string, mode: DebateMode, token: string): Promise<boolean> {
+    const res = await this.pool.query(
+      `DELETE FROM debate_claims WHERE signal_id = $1 AND mode = $2 AND owner_id = $3::uuid`,
+      [signalId, mode, token],
+    );
+    return res.rowCount != null && res.rowCount > 0;
   }
 }
 

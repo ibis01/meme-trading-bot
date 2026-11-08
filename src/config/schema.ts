@@ -75,6 +75,10 @@ export const envSchema = z.object({
     .int()
     .positive()
     .default(15 * 60 * 1000),
+  // Exclusive-claim lease (audit fix #5): one worker debates a given signal;
+  // concurrent callers skip without spending. Must exceed the worst-case
+  // debate duration (3 × perCallTimeoutMs).
+  DEBATE_CLAIM_LEASE_MS: z.coerce.number().int().positive().default(60_000),
   // Dead-man switch: advise mode refuses to start in TRADING_MODE=live unless
   // this is explicitly true.
   DEBATE_ADVISE_LIVE: z
