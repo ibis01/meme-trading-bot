@@ -81,8 +81,10 @@ export class InMemoryPositionLedger implements PositionLedger {
   }
 
   async get(tokenMint: string): Promise<Position | null> {
+    // Aligned with PostgresPositionLedger.get: a fully closed position is
+    // NOT an open position (quantity > 0), so callers never resell it.
     const p = this.byMint.get(tokenMint);
-    return p ? { ...p } : null;
+    return p && p.quantity > 0 ? { ...p } : null;
   }
 
   async list(): Promise<Position[]> {

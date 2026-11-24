@@ -14,6 +14,11 @@ import {
   validateSwapTxShape,
   SwapInstruction,
 } from './txGuard';
+import {
+  deriveFillFromTransaction,
+  humanToRaw,
+  DerivableTransaction,
+} from './fillDerivation';
 import { logger } from '../utils/logger';
 
 /**
@@ -34,11 +39,12 @@ import { logger } from '../utils/logger';
  *               transaction's balance deltas (never the quote — Rule 30:
  *               the chain is the source of truth, not the router).
  *
+ * Rule 30: the chain is the source of truth, not the router. Fill derivation
+ * is shared with the reconciler (src/execution/fillDerivation.ts) — audit C1.
+ *
  * Rule 12: the wallet key is parsed once at construction, used only to sign,
  * and NEVER logged, serialized, or persisted anywhere.
  */
-
-const LAMPORTS_PER_SOL = 1_000_000_000;
 
 export interface LiveExecutionProviderDeps {
   jupiter: JupiterClient;
@@ -92,12 +98,15 @@ export class LiveExecutionProvider implements ExecutionProvider {
     let amountRaw: string;
     let tokenDecimals: number | null = null;
     if (isBuy) {
-      const lamports = Math.round(req.amountSol * LAMPORTS_PER_SOL);
-      if (!Number.isSafeInteger(lamports) || lamports <= 0) {
+      // Audit C5: exact decimal → raw conversion via BigInt string math
+      // (humanToRaw). The old Math.round(human * 10**9) multiplied in float
+      // before its safe-integer check — precision was already lost by then.
+      const rawLamports = humanToRaw(req.amountSol, 9);
+      if (rawLamports === null) {
         logger.error({ event: 'LIVE_EXECUTION_FAILED', tradeRequestId: req.tradeRequestId, reason: 'UNSAFE_SOL_AMOUNT', amountSol: req.amountSol }, 'Unsafe SOL amount for BUY');
         return fail('FAILED', 'UNSAFE_SOL_AMOUNT');
       }
-      amountRaw = String(lamports);
+      amountRaw = String(rawLamports);
     } else {
       // SELL: raw = human tokenAmount * 10^decimals. Decimals come from the
       // chain (never guessed — Rule 30).
@@ -108,8 +117,11 @@ export class LiveExecutionProvider implements ExecutionProvider {
       if (tokenDecimals === null) {
         return fail('FAILED', 'TOKEN_DECIMALS_UNAVAILABLE');
       }
-      const raw = Math.round(req.tokenAmount * 10 ** tokenDecimals);
-      if (!Number.isSafeInteger(raw) || raw <= 0) {
+      // Audit C5: BigInt-exact raw amount — never a float multiply. Also
+      // accepts legitimate raw amounts above 2^53 (e.g. 10M tokens at 9
+      // decimals) that the old safe-integer check rejected outright.
+      const raw = humanToRaw(req.tokenAmount, tokenDecimals);
+      if (raw === null) {
         logger.error(
           { event: 'LIVE_EXECUTION_FAILED', tradeRequestId: req.tradeRequestId, reason: 'UNSAFE_TOKEN_RAW_AMOUNT', tokenAmount: req.tokenAmount, decimals: tokenDecimals },
           'Unsafe raw token amount for SELL',
@@ -261,7 +273,8 @@ export class LiveExecutionProvider implements ExecutionProvider {
       }
       const rank = statusRank(st.confirmationStatus);
       if (rank >= statusRank(commitment)) {
-        // ── Stage 7: VERIFY STATE (derive REAL fills from the chain) ─────
+        // ── Stage 7: VERIFY STATE (derive REAL fills from the chain via the
+        // canonical derivation shared with the reconciler) ──────────────
         return await this.verifyFill(req, signature, isBuy, tokenDecimals, fail);
       }
       // processed but not confirmed yet — keep polling
@@ -291,7 +304,7 @@ export class LiveExecutionProvider implements ExecutionProvider {
       encoding: 'jsonParsed',
       commitment: this.deps.commitment ?? 'confirmed',
       maxSupportedTransactionVersion: 1,
-    })) as LiveTransaction | null;
+    })) as DerivableTransaction | null;
 
     if (!tx || !tx.meta) {
       // Confirmed by status but the tx body is unavailable (lagging RPC).
@@ -301,92 +314,36 @@ export class LiveExecutionProvider implements ExecutionProvider {
     if (tx.meta.err) {
       return fail('FAILED', 'ONCHAIN_FAILED_VERIFY');
     }
-
-    const walletAddress = this.deps.wallet.publicKey.toBase58();
-    const keys = tx.transaction?.message?.accountKeys ?? [];
-    const walletIdx = keys.findIndex((k) =>
-      typeof k === 'string' ? k === walletAddress : k.pubkey === walletAddress,
-    );
-    if (walletIdx < 0) {
-      return fail('UNKNOWN', 'VERIFY_WALLET_NOT_IN_TX');
-    }
-
-    // ── SOL fill accounting (audit fix #3): the RAW wallet delta conflates
-    // three things — the trade, the tx fee, and rent locked in accounts the
-    // tx created. Book ONLY the trade:
-    //   adjustedDelta = walletDelta + fee + rentLocked
-    //     fee        — meta.fee (base + priority), charged separately from
-    //                  the swap and never part of the fill.
-    //     rentLocked — lamports parked in accounts CREATED by this tx that
-    //                  persist (pre===0 → created in-tx; post>0 → kept, e.g.
-    //                  a new ATA). Temp wSOL wrappers close at the end (post
-    //                  0) and contribute zero; pool/vault balances have
-    //                  pre>0, so swap flows through them are never counted.
-    const preBalances = tx.meta.preBalances;
-    const postBalances = tx.meta.postBalances;
-    const fee = tx.meta.fee;
-    if (
-      !preBalances ||
-      !postBalances ||
-      preBalances.length !== postBalances.length ||
-      keys.length !== preBalances.length ||
-      typeof fee !== 'number' ||
-      walletIdx >= preBalances.length
-    ) {
-      return fail('UNKNOWN', 'VERIFY_BALANCES_MISSING');
-    }
-    let rentLocked = 0;
-    for (let i = 0; i < preBalances.length; i++) {
-      if (i === walletIdx) continue;
-      if (preBalances[i] === 0 && postBalances[i] > 0) rentLocked += postBalances[i];
-    }
-    const walletDelta = postBalances[walletIdx] - preBalances[walletIdx];
-    const adjustedDelta = walletDelta + fee + rentLocked;
-    const filledAmountSol = (isBuy ? -adjustedDelta : adjustedDelta) / LAMPORTS_PER_SOL;
-    // Token deltas from pre/postTokenBalances (sum across the wallet's
-    // accounts for this mint — ATA + any wrapped accounts).
-    const sumFor = (list: TokenBalance[] | undefined): number | null => {
-      if (!list) return null;
-      let sum = 0;
-      let seen = false;
-      for (const t of list) {
-        if (t.mint === req.tokenMint && t.owner === walletAddress) {
-          seen = true;
-          sum += Number(t.uiTokenAmount?.amount ?? 0);
-        }
-      }
-      return seen ? sum : null;
-    };
-    const preRaw = sumFor(tx.meta.preTokenBalances);
-    const postRaw = sumFor(tx.meta.postTokenBalances);
-    if (preRaw === null && postRaw === null) {
-      return fail('UNKNOWN', 'VERIFY_TOKEN_BALANCES_MISSING');
-    }
     const decimals = tokenDecimals ?? (await this.getTokenDecimals(req.tokenMint));
     if (decimals === null) {
       return fail('UNKNOWN', 'VERIFY_DECIMALS_UNAVAILABLE');
     }
-    const rawDelta = (postRaw ?? 0) - (preRaw ?? 0);
-    const filledTokenAmount = Math.abs(rawDelta) / 10 ** decimals;
 
-    if (!(filledAmountSol > 0) || !(filledTokenAmount > 0)) {
-      // A CONFIRMED fill without usable amounts cannot be booked — the
-      // executor treats this as an error. UNKNOWN is the honest state.
+    // Audit C1: THE canonical derivation — identical math to the delayed
+    // reconciliation path (fee- and rent-exact SOL accounting, wallet-scoped
+    // token deltas, fail-closed on any missing evidence).
+    const derived = deriveFillFromTransaction(tx, {
+      walletAddress: this.deps.wallet.publicKey.toBase58(),
+      tokenMint: req.tokenMint,
+      isBuy,
+      decimals,
+    });
+    if (!derived.ok) {
       logger.error(
-        { event: 'EXECUTION_UNKNOWN', tradeRequestId: req.tradeRequestId, signature, filledAmountSol, filledTokenAmount },
+        { event: 'EXECUTION_UNKNOWN', tradeRequestId: req.tradeRequestId, signature, reason: derived.reason },
         'Verified tx has unusable fill amounts — NOT booking a fabricated position',
       );
-      return fail('UNKNOWN', 'UNUSABLE_FILL_AMOUNTS');
+      return fail('UNKNOWN', derived.reason);
     }
 
     logger.info(
-      { event: 'LIVE_EXECUTION_CONFIRMED', tradeRequestId: req.tradeRequestId, signature, filledAmountSol, filledTokenAmount },
+      { event: 'LIVE_EXECUTION_CONFIRMED', tradeRequestId: req.tradeRequestId, signature, filledAmountSol: derived.filledAmountSol, filledTokenAmount: derived.filledTokenAmount },
       'Live execution confirmed and verified on-chain',
     );
     return {
       txSignature: signature,
-      filledAmountSol,
-      filledTokenAmount,
+      filledAmountSol: derived.filledAmountSol,
+      filledTokenAmount: derived.filledTokenAmount,
       filledPriceUsd: 0,
       status: 'CONFIRMED',
     };
@@ -556,28 +513,4 @@ function statusRank(s: string | null): number {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-interface TokenBalance {
-  accountIndex: number;
-  mint: string;
-  owner?: string;
-  uiTokenAmount?: { amount?: string };
-}
-
-interface LiveTransaction {
-  meta?: {
-    err?: unknown;
-    /** Total tx fee in lamports (base + priority). Required for fill math. */
-    fee?: number;
-    preBalances?: number[];
-    postBalances?: number[];
-    preTokenBalances?: TokenBalance[];
-    postTokenBalances?: TokenBalance[];
-  } | null;
-  transaction?: {
-    message?: {
-      accountKeys?: Array<string | { pubkey: string }>;
-    };
-  };
 }

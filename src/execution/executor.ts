@@ -7,6 +7,7 @@ import { ExecutionStore, StoredExecution } from '../state/executions';
 import { PnlStore } from '../state/dailyPnl';
 import { IdempotencyService } from '../infra/idempotency';
 import { ExecutionProvider } from './types';
+import { FillLedger } from './fillLedger';
 import { logger } from '../utils/logger';
 
 export interface TradeExecutorDeps {
@@ -18,6 +19,13 @@ export interface TradeExecutorDeps {
   idempotency: IdempotencyService;
   provider: ExecutionProvider;
   pnl: PnlStore;
+  /**
+   * Audit C1/C2 (2026-11-24): THE canonical fill booking service. Every
+   * confirmed fill — immediate or reconciled — books through it (idempotent,
+   * transactional) and its health gate blocks new BUYs while any fill is
+   * unbooked or uncertain.
+   */
+  fillLedger: FillLedger;
 }
 
 export type ExecuteResult =
@@ -123,6 +131,31 @@ export class TradeExecutor {
         }
       }
 
+      // Stage 3.2 (audit C2): fail-closed ledger health. Portfolio state may
+      // be missing fills (reconciliation pending) or contradict confirmed
+      // fills (booking failure). Sizing NEW risk against such state is how
+      // positions and PnL drift from reality — BUYs are blocked while the
+      // repair queue is non-empty. SELLs are never blocked (exits must stay
+      // available, failure mode C2 of the 2026-11-08 audit).
+      if (proposal.proposal.side === 'BUY') {
+        const health = await this.deps.fillLedger.isLedgerHealthy();
+        if (!health.healthy) {
+          await this.deps.idempotency.release(
+            this.execKey(proposal.tradeRequestId),
+          );
+          logger.error(
+            {
+              event: 'LEDGER_BUY_BLOCKED',
+              tradeRequestId: proposal.tradeRequestId,
+              unresolved: health.unresolved,
+              detail: health.detail,
+            },
+            'New BUY blocked — ledger has unbooked or uncertain fills (repair queue non-empty)',
+          );
+          return { kind: 'REJECTED', reason: 'LEDGER_UNRESOLVED_FILLS' };
+        }
+      }
+
       // Stage 4: risk re-evaluation (catches stale quotes)
       const fresh = await this.deps.riskEngine.evaluate(proposal.proposal);
       if (!fresh.allowed) {
@@ -220,7 +253,7 @@ export class TradeExecutor {
 
       if (outcome.status === 'CONFIRMED') {
         await this.deps.proposals.updateStatus(proposal.id, 'EXECUTED');
-        await this.bookConfirmedFill(proposal, outcome);
+        await this.bookConfirmedFill(proposal, stored, outcome);
         logger.info(
           {
             event: 'EXECUTION_CONFIRMED',
@@ -323,69 +356,108 @@ export class TradeExecutor {
     }
   }
 
+  /**
+   * Audit C1: booking goes through THE canonical FillLedger — idempotent,
+   * transactional, shared with the reconciliation runner. A booking failure
+   * must NEVER regress a confirmed execution to UNKNOWN (the chain state is
+   * fact); it lands in the repair queue and blocks new BUYs instead.
+   */
   private async bookConfirmedFill(
     proposal: StoredProposal,
+    stored: StoredExecution,
     outcome: {
       filledAmountSol: number;
       filledTokenAmount: number;
       txSignature: string;
     },
   ): Promise<void> {
-    try {
-      const tokens = outcome.filledTokenAmount;
-      const sol = outcome.filledAmountSol;
-      if (!(tokens > 0) || !(sol > 0)) {
-        throw new Error(
-          `UNUSABLE_FILL_AMOUNTS(tokens=${tokens}, sol=${sol}) — refusing to book a fabricated position`,
-        );
-      }
-
-      if (proposal.proposal.side === 'BUY') {
-        await this.deps.positions.open({
-          tokenMint: proposal.proposal.tokenMint,
-          tradeRequestId: proposal.tradeRequestId,
-          quantity: tokens,
-          priceSol: sol / tokens,
-          signature: outcome.txSignature,
-        });
-      } else {
-        const held = await this.deps.positions.get(proposal.proposal.tokenMint);
-        if (!held || held.quantity <= 0) {
-          logger.warn(
-            {
-              event: 'SELL_WITHOUT_POSITION',
-              tradeRequestId: proposal.tradeRequestId,
-            },
-            'Sell filled but no position was on record',
-          );
-          return;
-        }
-        const qty = Math.min(tokens, held.quantity);
-        const closeResult = await this.deps.positions.close({
-          tokenMint: proposal.proposal.tokenMint,
-          tradeRequestId: proposal.tradeRequestId,
-          quantity: qty,
-          priceSol: sol / qty,
-          signature: outcome.txSignature,
-        });
-        await this.deps.pnl.addSol(closeResult.realizedPnlSol);
-        logger.info(
-          {
-            event: 'PNL_RECORDED',
-            tradeRequestId: proposal.tradeRequestId,
-            realizedSol: closeResult.realizedPnlSol,
-          },
-          'Realized PnL recorded',
-        );
-      }
-    } catch (err) {
+    if (!(outcome.filledTokenAmount > 0) || !(outcome.filledAmountSol > 0)) {
+      // The provider must never report CONFIRMED without usable amounts;
+      // if it does, queue it for repair rather than fabricating a position.
       logger.error(
         {
-          event: 'LEDGER_RECONCILE_FAILED',
+          event: 'LEDGER_BOOKING_UNRESOLVED',
+          tradeRequestId: proposal.tradeRequestId,
+          reason: 'UNUSABLE_FILL_AMOUNTS',
+          tokens: outcome.filledTokenAmount,
+          sol: outcome.filledAmountSol,
+        },
+        'Confirmed outcome lacks usable fill amounts — repair queue holds it; new BUYs blocked',
+      );
+      return;
+    }
+    try {
+      const result = await this.deps.fillLedger.bookFill({
+        executionId: stored.id,
+        proposalId: proposal.id,
+        tradeRequestId: proposal.tradeRequestId,
+        side: proposal.proposal.side,
+        tokenMint: proposal.proposal.tokenMint,
+        txSignature: outcome.txSignature,
+        filledTokenAmount: outcome.filledTokenAmount,
+        filledAmountSol: outcome.filledAmountSol,
+        source: 'IMMEDIATE',
+      });
+      switch (result.kind) {
+        case 'BOOKED':
+          logger.info(
+            {
+              event: 'EXECUTION_FILL_BOOKED',
+              tradeRequestId: proposal.tradeRequestId,
+              txSignature: outcome.txSignature,
+              source: 'IMMEDIATE',
+            },
+            'Confirmed fill booked into positions',
+          );
+          if (result.realizedPnlSol !== undefined) {
+            logger.info(
+              {
+                event: 'PNL_RECORDED',
+                tradeRequestId: proposal.tradeRequestId,
+                realizedSol: result.realizedPnlSol,
+              },
+              'Realized PnL recorded',
+            );
+          }
+          break;
+        case 'ALREADY_BOOKED':
+          logger.warn(
+            { event: 'FILL_ALREADY_BOOKED', tradeRequestId: proposal.tradeRequestId, txSignature: outcome.txSignature },
+            'Fill was already booked (idempotent replay) — no double counting',
+          );
+          break;
+        case 'UNRECONCILABLE':
+          logger.error(
+            {
+              event: 'LEDGER_BOOKING_UNRESOLVED',
+              tradeRequestId: proposal.tradeRequestId,
+              reason: result.reason,
+            },
+            'Confirmed fill violates booking invariants — repair queue holds it; new BUYs blocked',
+          );
+          break;
+        case 'QUEUED':
+          logger.error(
+            {
+              event: 'LEDGER_BOOKING_UNRESOLVED',
+              tradeRequestId: proposal.tradeRequestId,
+              reason: result.error,
+            },
+            'Fill booking failed transiently — repair queue holds it; new BUYs blocked',
+          );
+          break;
+      }
+    } catch (err) {
+      // The ledger is unreachable — the execution stays CONFIRMED (chain
+      // fact), and the reconciliation runner's repair sweep will discover
+      // this CONFIRMED-without-booking row and re-attempt.
+      logger.error(
+        {
+          event: 'LEDGER_BOOKING_ERROR',
           tradeRequestId: proposal.tradeRequestId,
           err,
         },
-        'Failed to reconcile position/PnL — gate will be stale until corrected',
+        'Fill ledger threw during booking — repair sweep will re-attempt; new BUYs blocked once visible',
       );
     }
   }

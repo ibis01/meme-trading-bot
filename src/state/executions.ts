@@ -19,6 +19,8 @@ export interface ExecutionStore {
   updateStatus(id: string, status: ExecutionStatus, error?: string): Promise<void>;
   /** P1-7: executions that need reconciliation. */
   listUnresolved(limit: number): Promise<StoredExecution[]>;
+  /** Audit C1: confirmed executions, oldest first (repair-sweep source). */
+  listConfirmed(limit: number): Promise<StoredExecution[]>;
 }
 
 export class InMemoryExecutionStore implements ExecutionStore {
@@ -52,6 +54,13 @@ export class InMemoryExecutionStore implements ExecutionStore {
   async listUnresolved(limit: number): Promise<StoredExecution[]> {
     return [...this.byId.values()]
       .filter((e) => e.status === 'SUBMITTED' || e.status === 'UNKNOWN')
+      .slice(0, limit);
+  }
+
+  async listConfirmed(limit: number): Promise<StoredExecution[]> {
+    return [...this.byId.values()]
+      .filter((e) => e.status === 'CONFIRMED')
+      .sort((a, b) => a.executedAt - b.executedAt)
       .slice(0, limit);
   }
 }
@@ -95,6 +104,14 @@ export class PostgresExecutionStore implements ExecutionStore {
   async listUnresolved(limit: number): Promise<StoredExecution[]> {
     const res = await this.pool.query(
       "SELECT * FROM executions WHERE status IN ('SUBMITTED','UNKNOWN') ORDER BY executed_at ASC LIMIT $1",
+      [limit],
+    );
+    return res.rows.map((r) => this.row(r));
+  }
+
+  async listConfirmed(limit: number): Promise<StoredExecution[]> {
+    const res = await this.pool.query(
+      "SELECT * FROM executions WHERE status = 'CONFIRMED' ORDER BY executed_at ASC LIMIT $1",
       [limit],
     );
     return res.rows.map((r) => this.row(r));
