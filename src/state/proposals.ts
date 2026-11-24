@@ -59,8 +59,8 @@ export class PostgresProposalStore implements ProposalStore {
   async save(p: StoredProposal): Promise<void> {
     await this.pool.query(
       `INSERT INTO trade_proposals
-         (id, trade_request_id, signal_id, token_mint, side, amount_sol, risk_decision, status, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, to_timestamp($9/1000.0))
+         (id, trade_request_id, signal_id, token_mint, side, amount_sol, sell_percent_bps, risk_decision, status, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, to_timestamp($10/1000.0))
        ON CONFLICT (trade_request_id) DO NOTHING`,
       [
         p.id,
@@ -68,7 +68,10 @@ export class PostgresProposalStore implements ProposalStore {
         p.signalId,
         p.proposal.tokenMint,
         p.proposal.side,
-        p.proposal.amountSol,
+        // Audit C4 (2026-11-24): SELLs never carry an SOL amount — their
+        // sizing evidence is sell_percent_bps (trade_proposals_side_amount_check).
+        p.proposal.side === 'BUY' ? p.proposal.amountSol : null,
+        p.proposal.side === 'SELL' ? (p.proposal.sellPercentBps ?? 10_000) : null,
         JSON.stringify({ proposal: p.proposal, decision: p.decision }),
         p.status,
         p.createdAt,
