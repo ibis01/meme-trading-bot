@@ -5,27 +5,42 @@ import { StoredExecution } from '../state/executions';
  * resolved. The reconciler looks up the transaction on-chain and updates the
  * stored record.
  *
- * P1-7 will implement this for live mode. For now the interface exists so
- * the executor can log UNKNOWN events against a known contract rather than
- * a silent gap.
+ * Gate 1a: reconciliation NEVER books fills itself. It derives real fill
+ * amounts on-chain (deriveFillFromTransaction — shared with the immediate
+ * confirm path) and the CALLER books through the canonical FillBookkeeper,
+ * so immediate and delayed paths call the same booking function.
  */
 export type ReconciledStatus = 'CONFIRMED' | 'FAILED' | 'STILL_UNKNOWN';
 
 export interface ReconciliationResult {
   status: ReconciledStatus;
-  /** Populated when status === 'CONFIRMED'. */
+  /** Populated when status === 'CONFIRMED'. REQUIRED derivable fills. */
   filledAmountSol?: number;
+  filledTokenAmount?: number;
+  /** EXACT raw base units when derivable (Gate 2). */
+  filledTokenAmountRaw?: string;
   filledPriceUsd?: number;
   error?: string;
+}
+
+/** Mint/side of the trade behind an execution, resolved by the runner. */
+export interface ReconciliationContext {
+  tokenMint: string;
+  side: 'BUY' | 'SELL';
 }
 
 export interface Reconciler {
   readonly name: string;
   /**
    * Look up the on-chain state of an execution that was left in SUBMITTED
-   * or UNKNOWN. Must never resubmit — only reconcile.
+   * or UNKNOWN. Must never resubmit — only reconcile. `context` is the
+   * proposal-derived trade metadata needed to derive fills; null when the
+   * proposal is missing (the reconciler then refuses to CONFIRM).
    */
-  reconcile(execution: StoredExecution): Promise<ReconciliationResult>;
+  reconcile(
+    execution: StoredExecution,
+    context: ReconciliationContext | null,
+  ): Promise<ReconciliationResult>;
 }
 
 /** No-op reconciler used in paper mode. */
