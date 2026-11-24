@@ -9,7 +9,7 @@ import { BirdeyeMarketProvider } from '../data/birdeye';
 import { DexScreenerMarketProvider } from '../data/dexscreener';
 import { MarketDataProvider } from '../data/types';
 import { MomentumStrategy, defaultMomentumConfig } from '../strategy/momentum';
-import { MarketSnapshot } from '../strategy/types';
+import { MarketSnapshot, StrategyContext } from '../strategy/types';
 import { logger } from '../utils/logger';
 import { closeRedis } from '../infra/redis';
 import { closePool } from '../infra/db';
@@ -93,6 +93,21 @@ export function buildFeed(): MarketFeed {
   return new FixtureFeed([demoSnapshot()]);
 }
 
+/**
+ * Audit 2026-11-09 (finding F2): strategy sizing MUST come from validated
+ * central config (Rule 33), not hardcoded literals. The previous inline
+ * `{ equitySol: 10, riskPerTradeSol: 0.1, maxPositionSol: 0.1 }` silently
+ * ignored RISK_PER_TRADE_SOL (dead config — 10× smaller than the hardcoded
+ * 0.1). Exported pure for testability.
+ */
+export function strategyContextFromConfig(): StrategyContext {
+  return {
+    equitySol: config.EQUITY_SOL,
+    riskPerTradeSol: config.RISK_PER_TRADE_SOL,
+    maxPositionSol: config.MAX_POSITION_SIZE_SOL,
+  };
+}
+
 async function main() {
   logger.info(
     {
@@ -119,11 +134,7 @@ async function main() {
     {
       feed,
       strategy: new MomentumStrategy(defaultMomentumConfig),
-      strategyContext: {
-        equitySol: 10,
-        riskPerTradeSol: 0.1,
-        maxPositionSol: 0.1,
-      },
+      strategyContext: strategyContextFromConfig(),
       orchestrator: app.orchestrator,
       executor: app.executor,
     },

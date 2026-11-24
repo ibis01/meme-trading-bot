@@ -3,7 +3,8 @@ import { logger } from '../utils/logger';
 import { RiskEngine } from '../risk/engine';
 import { ProposalOrchestrator } from '../orchestrator/orchestrator';
 import { TradeExecutor } from '../execution/executor';
-import { PaperExecutionProvider, StaticPriceOracle } from '../execution/paper';
+import { PaperExecutionProvider, LivePriceOracle, PaperFillModel } from '../execution/paper';
+import { DexScreenerMarketProvider } from '../data/dexscreener';
 import {
   PostgresRejectionStore,
   RejectionStore,
@@ -228,6 +229,12 @@ export function buildProductionApp(): ProductionApp {
     );
   }
 
+  // Audit 2026-11-09 (finding F1): paper fills must execute at REAL market
+  // prices (DexScreener, no API key) and include trading costs, otherwise
+  // every paper round-trip books structurally zero PnL and the seven-day
+  // soak proves nothing about the strategy (Rule 17: paper mode uses real
+  // market data). A provider outage fails the paper fill instead of
+  // inventing a price — fail-safe direction.
   const provider: ExecutionProvider =
     config.TRADING_MODE === 'live'
       ? new LiveExecutionProvider({
@@ -238,7 +245,13 @@ export function buildProductionApp(): ProductionApp {
           confirmTimeoutMs: config.LIVE_CONFIRM_TIMEOUT_MS,
           confirmPollMs: config.LIVE_CONFIRM_POLL_MS,
         })
-      : new PaperExecutionProvider(new StaticPriceOracle({}));
+      : new PaperExecutionProvider(
+          new LivePriceOracle(new DexScreenerMarketProvider()),
+          {
+            feeBps: config.PAPER_FEE_BPS,
+            slippageBps: config.PAPER_SLIPPAGE_BPS,
+          } satisfies PaperFillModel,
+        );
 
   const riskEngine = new RiskEngine({ killSwitch, pnl, positions });
 

@@ -3,6 +3,7 @@ import { ProposalOrchestrator } from '../orchestrator/orchestrator';
 import { TradeExecutor } from '../execution/executor';
 import { Signal } from '../strategy/types';
 import { logger as _logger } from '../utils/logger';
+import { config } from '../config';
 
 import { PositionLedger } from '../state/positions/types';
 
@@ -75,7 +76,9 @@ export class TelegramTradeHandler {
       case 'CONFIRMED':
         return {
           ok: true,
-          message: `✅ Executed (paper). Signature: ${execResult.execution.txSignature?.slice(0, 12) ?? 'n/a'}…`,
+          // Audit 2026-11-09: message must reflect the ACTUAL mode — the old
+          // hardcoded "(paper)" would mislabel a live fill as simulated.
+          message: `✅ Executed${config.TRADING_MODE === 'live' ? '' : ' (paper)'}. Signature: ${execResult.execution.txSignature?.slice(0, 12) ?? 'n/a'}…`,
         };
       case 'DUPLICATE':
         return { ok: false, message: 'Already executed.' };
