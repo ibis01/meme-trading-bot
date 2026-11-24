@@ -70,4 +70,10 @@ export interface PositionLedger {
   list(): Promise<Position[]>;
   getOpenCount(): Promise<number>;
   getFills(positionId: string): Promise<PositionFill[]>;
+  /**
+   * Gate 1 (audit 2026-11-09): the canonical booking function's idempotency
+   * pre-check — has this trade request ALREADY produced a ledger fill?
+   * Must be answered before any mutation so a rerun is an exact no-op.
+   */
+  getFillByRequestId(tradeRequestId: string): Promise<PositionFill | null>;
 }

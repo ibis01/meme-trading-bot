@@ -15,6 +15,11 @@ export class InMemoryPositionLedger implements PositionLedger {
   async open(input: OpenPositionInput): Promise<Position> {
     validateQuantity(input.quantity);
     validatePrice(input.priceSol);
+    // Gate 1: reject duplicate fills BEFORE any mutation — the Postgres
+    // ledger rolls the whole transaction back on a duplicate
+    // trade_request_id, so this ledger must have the same observable
+    // behavior (the canonical booking function relies on it).
+    this.assertNoDuplicateRequest(input.tradeRequestId);
 
     const now = Date.now();
     const existing = this.byMint.get(input.tokenMint);
@@ -52,6 +57,8 @@ export class InMemoryPositionLedger implements PositionLedger {
   async close(input: ClosePositionInput): Promise<CloseResult> {
     validateQuantity(input.quantity);
     validatePrice(input.priceSol);
+    // Gate 1: duplicate check BEFORE mutation (see open()).
+    this.assertNoDuplicateRequest(input.tradeRequestId);
 
     const existing = this.byMint.get(input.tokenMint);
     if (!existing || existing.quantity <= 0) {
@@ -101,6 +108,11 @@ export class InMemoryPositionLedger implements PositionLedger {
     return this.fills.filter((f) => f.positionId === positionId).map((f) => ({ ...f }));
   }
 
+  async getFillByRequestId(tradeRequestId: string): Promise<PositionFill | null> {
+    const f = this.fills.find((x) => x.tradeRequestId === tradeRequestId);
+    return f ? { ...f } : null;
+  }
+
   private recordFill(
     positionId: string,
     tradeRequestId: string,
@@ -109,9 +121,6 @@ export class InMemoryPositionLedger implements PositionLedger {
     priceSol: number,
     signature: string,
   ): void {
-    if (this.fills.some((f) => f.tradeRequestId === tradeRequestId)) {
-      throw new Error('DUPLICATE_TRADE_REQUEST');
-    }
     this.fills.push({
       id: randomUUID(),
       positionId,
@@ -123,6 +132,13 @@ export class InMemoryPositionLedger implements PositionLedger {
       signature,
       executedAt: Date.now(),
     });
+  }
+
+  /** Gate 1: duplicate trade requests throw BEFORE any ledger mutation. */
+  private assertNoDuplicateRequest(tradeRequestId: string): void {
+    if (this.fills.some((f) => f.tradeRequestId === tradeRequestId)) {
+      throw new Error('DUPLICATE_TRADE_REQUEST');
+    }
   }
 }
 
