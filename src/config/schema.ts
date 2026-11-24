@@ -97,6 +97,23 @@ export const envSchema = z.object({
   JUPITER_API_URL: z.string().url().default('https://quote-api.jup.ag/v6'),
   LIVE_CONFIRM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   LIVE_CONFIRM_POLL_MS: z.coerce.number().int().positive().default(2_000),
+
+  // ── Audit 2026-11-24: gated production launch (Gates 0–2) ─────────────
+  // Gate 3 minimum: bind the trading wallet's public key at startup. In
+  // live mode a mismatch between the loaded key and this value is fatal —
+  // the configured key is not the intended trading wallet.
+  EXPECTED_WALLET_PUBKEY: z.string().min(32).optional(),
+  // Fail-closed startup (Gate 1d): require Postgres/Redis/schema/provider/
+  // market-data/wallet readiness. Implied (mandatory) for manual+live; set
+  // true on paper soaks — launch sequence step 1: paper connects to REAL
+  // Postgres/Redis, no silent in-memory degradation.
+  REQUIRE_PERSISTENT_STATE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  // Reconciliation runner cadence: resolves SUBMITTED/UNKNOWN executions
+  // on-chain and re-books fills that never reached the ledger (repair sweep).
+  RECONCILIATION_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

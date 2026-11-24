@@ -11,11 +11,12 @@ import { MarketDataProvider } from '../data/types';
 import { MomentumStrategy, defaultMomentumConfig } from '../strategy/momentum';
 import { MarketSnapshot, StrategyContext } from '../strategy/types';
 import { logger } from '../utils/logger';
-import { closeRedis } from '../infra/redis';
-import { closePool } from '../infra/db';
+import { closeRedis, getRedis } from '../infra/redis';
+import { closePool, getPool } from '../infra/db';
 import { config } from '../config';
 import { startTelegramBot } from '../telegram/bot';
 import { TelegramTradeHandler } from '../telegram/tradeHandlers';
+import { runReadinessChecks } from './readiness';
 
 const DEMO_MINT = 'DEMO_TOKEN_MINT_11111111111111111111111111111';
 
@@ -126,8 +127,55 @@ async function main() {
     );
     process.exit(1);
   }
+  // Gate 0 (audit H3): a soak launched with REQUIRE_PERSISTENT_STATE=true is
+  // a production-trial run — synthetic demo data would invalidate it.
+  if (config.REQUIRE_PERSISTENT_STATE && marketSource === 'fixture') {
+    logger.fatal(
+      'REFUSING TO START: REQUIRE_PERSISTENT_STATE=true requires real market data ' +
+        '(MARKET_SOURCE=dexscreener or provider). A soak on synthetic data proves nothing.',
+    );
+    process.exit(1);
+  }
 
   const app = buildProductionApp();
+
+  // Gate 1d (audit H2): fail-closed startup validation. Mandatory for
+  // manual/live; enforced on paper soaks via REQUIRE_PERSISTENT_STATE=true
+  // (launch sequence step 1: paper connects to REAL Postgres/Redis).
+  const readiness = await runReadinessChecks({
+    tradingMode: config.TRADING_MODE,
+    requirePersistentState: config.REQUIRE_PERSISTENT_STATE,
+    databaseUrl: config.DATABASE_URL,
+    pool: config.DATABASE_URL ? getPool() : undefined,
+    redisPing: async () => {
+      const client = getRedis();
+      await client.ping();
+    },
+    killSwitchGet: () => app.killSwitch.get(),
+    walletPubkey: app.walletPubkey,
+    expectedWalletPubkey: config.EXPECTED_WALLET_PUBKEY,
+    securityProvider: config.SECURITY_PROVIDER,
+    marketSource,
+    liveConfirmTimeoutMs: config.LIVE_CONFIRM_TIMEOUT_MS,
+    liveConfirmPollMs: config.LIVE_CONFIRM_POLL_MS,
+  });
+  if (!readiness.ok) {
+    for (const c of readiness.results) {
+      logger.error(
+        { check: c.name, ok: c.ok, detail: c.detail },
+        'READINESS_CHECK_FAILED',
+      );
+    }
+    logger.fatal(
+      'REFUSING TO START: LIVE_READINESS failed — see READINESS_CHECK_FAILED entries above.',
+    );
+    process.exit(1);
+  }
+  logger.info(
+    { checks: readiness.results.length },
+    'LIVE_READINESS passed',
+  );
+
   const feed = buildFeed();
 
   const loop = new SignalLoop(
@@ -163,6 +211,12 @@ async function main() {
   });
   exitMonitor.start();
 
+  // Audit C1 (2026-11-24): reconciliation runs in the production loop —
+  // resolves SUBMITTED/UNKNOWN executions on-chain and re-books fills that
+  // never reached the ledger. While the repair queue is non-empty, the
+  // executor blocks new BUYs (fail-closed).
+  app.reconciliationRunner.start(config.RECONCILIATION_INTERVAL_MS);
+
   // P1-12: start the Telegram control plane if configured.
   let telegramBot: ReturnType<typeof startTelegramBot> = null;
   if (config.TELEGRAM_BOT_TOKEN) {
@@ -195,6 +249,7 @@ async function main() {
     } catch {
       /* ignore */
     }
+    await app.reconciliationRunner.stop();
     await exitMonitor.stop();
     await loop.stop();
     try {

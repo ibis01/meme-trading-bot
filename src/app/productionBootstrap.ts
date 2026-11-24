@@ -1,5 +1,6 @@
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import type { Keypair } from '@solana/web3.js';
 import { RiskEngine } from '../risk/engine';
 import { ProposalOrchestrator } from '../orchestrator/orchestrator';
 import { TradeExecutor } from '../execution/executor';
@@ -12,6 +13,10 @@ import {
 import { LiveExecutionProvider, parseWalletKey } from '../execution/live';
 import { JupiterClient } from '../execution/jupiter';
 import { SolanaRpcClient } from '../data/solanaRpc';
+import { buildFillLedger, FillLedger } from '../execution/fillLedger';
+import { ReconciliationRunner } from '../execution/reconciliationRunner';
+import { NullReconciler } from '../execution/reconciliation';
+import { RpcReconciler } from '../execution/rpcReconciler';
 import { MockSecurityProvider } from '../security';
 import { RugCheckProvider } from '../security/rugcheck';
 import { HeliusMarketProvider } from '../data/helius';
@@ -79,6 +84,12 @@ export interface ProductionApp {
   orchestrator: ProposalOrchestrator;
   executor: TradeExecutor;
   storeBackend: 'postgres' | 'memory';
+  /** Audit C1: canonical fill booking (idempotent, transactional). */
+  fillLedger: FillLedger;
+  /** Audit C1: resolves SUBMITTED/UNKNOWN executions and repairs bookings. */
+  reconciliationRunner: ReconciliationRunner;
+  /** Public key of the loaded trading wallet (null outside live mode). */
+  walletPubkey: string | null;
   /** Phase 2 advisory debate layer. Undefined when DEBATE_MODE=off. */
   debateAdvisor?: DebateAdvisor;
 }
@@ -98,6 +109,24 @@ function selectSecurityProvider(): SecurityProvider {
 }
 
 export function buildProductionApp(): ProductionApp {
+  // Audit H1 (2026-11-24): fail-closed on missing persistence. manual/live
+  // modes have real funds at stake — a silent in-memory degradation would
+  // fabricate portfolio state out of thin air. (Paper keeps memory mode for
+  // dev/CI; soaks set REQUIRE_PERSISTENT_STATE=true, enforced by readiness.)
+  if (config.TRADING_MODE !== 'paper' && !config.DATABASE_URL) {
+    logger.fatal(
+      `REFUSING TO START: TRADING_MODE=${config.TRADING_MODE} requires DATABASE_URL. ` +
+        'In-memory portfolio state is not allowed outside paper mode.',
+    );
+    process.exit(1);
+  }
+  if (config.TRADING_MODE !== 'paper' && !config.REDIS_URL) {
+    logger.fatal(
+      `REFUSING TO START: TRADING_MODE=${config.TRADING_MODE} requires REDIS_URL ` +
+        '(idempotency locks + kill switch storage).',
+    );
+    process.exit(1);
+  }
   const redis = getRedis();
   // Audit fix M4: reads fail closed (and stay legible) during a Redis outage
   // instead of throwing opaque errors from every trade path.
@@ -150,6 +179,16 @@ export function buildProductionApp(): ProductionApp {
     verdicts = new InMemoryStrategyVerdictStore();
     // rejectionStore remains undefined in memory mode
   }
+
+  // Audit C1/C2 (2026-11-24): canonical fill booking + reconciliation
+  // repair queue. Every confirmed fill — immediate or reconciled — books
+  // through this; unbooked fills block new BUYs until repaired.
+  const fillLedger = buildFillLedger(storeBackend, {
+    pool: storeBackend === 'postgres' ? getPool() : undefined,
+    positions,
+    pnl,
+    executions,
+  });
 
   // Rule 17 / audit fix H1: gate enablement semantics live in
   // src/risk/gatePolicy.ts (tested in tests/strategyGatePolicy.test.ts):
@@ -229,18 +268,36 @@ export function buildProductionApp(): ProductionApp {
     );
   }
 
+  // Rule 12 / Gate 3: the key is parsed exactly once. The public key is
+  // bound to EXPECTED_WALLET_PUBKEY at startup — a mismatch means the
+  // configured key is not the intended trading wallet (fatal).
+  let wallet: Keypair | null = null;
+  let walletPubkey: string | null = null;
+  if (config.TRADING_MODE === 'live') {
+    wallet = parseWalletKey(config.WALLET_PRIVATE_KEY as string);
+    walletPubkey = wallet.publicKey.toBase58();
+    if (config.EXPECTED_WALLET_PUBKEY && config.EXPECTED_WALLET_PUBKEY !== walletPubkey) {
+      logger.fatal(
+        { expected: config.EXPECTED_WALLET_PUBKEY, actual: walletPubkey },
+        'WALLET_PUBKEY_MISMATCH — refusing to start with this wallet',
+      );
+      process.exit(1);
+    }
+  }
+
   // Audit 2026-11-09 (finding F1): paper fills must execute at REAL market
   // prices (DexScreener, no API key) and include trading costs, otherwise
   // every paper round-trip books structurally zero PnL and the seven-day
   // soak proves nothing about the strategy (Rule 17: paper mode uses real
   // market data). A provider outage fails the paper fill instead of
   // inventing a price — fail-safe direction.
+  const rpc = new SolanaRpcClient(config.SOLANA_RPC_URL);
   const provider: ExecutionProvider =
     config.TRADING_MODE === 'live'
       ? new LiveExecutionProvider({
           jupiter: new JupiterClient(config.JUPITER_API_URL),
-          rpc: new SolanaRpcClient(config.SOLANA_RPC_URL),
-          wallet: parseWalletKey(config.WALLET_PRIVATE_KEY as string),
+          rpc,
+          wallet: wallet as Keypair,
           maxQuoteAgeMs: config.MAX_QUOTE_AGE_MS,
           confirmTimeoutMs: config.LIVE_CONFIRM_TIMEOUT_MS,
           confirmPollMs: config.LIVE_CONFIRM_POLL_MS,
@@ -275,7 +332,22 @@ export function buildProductionApp(): ProductionApp {
     idempotency,
     provider,
     pnl,
+    fillLedger,
   });
+
+  // Audit C1 (2026-11-24): the reconciliation runner MUST exist in the
+  // production graph. Without it SUBMITTED/UNKNOWN executions sat unresolved
+  // forever and no delayed fill was ever booked. In live mode it derives
+  // real fills on-chain through the shared derivation; paper mode uses the
+  // NullReconciler (paper txs are simulated, nothing to look up).
+  const reconciliationRunner = new ReconciliationRunner(
+    executions,
+    proposals,
+    config.TRADING_MODE === 'live'
+      ? new RpcReconciler(rpc, walletPubkey as string)
+      : new NullReconciler(),
+    fillLedger,
+  );
 
   logger.info(
     {
@@ -304,6 +376,9 @@ export function buildProductionApp(): ProductionApp {
     orchestrator,
     executor,
     storeBackend,
+    fillLedger,
+    reconciliationRunner,
+    walletPubkey,
     debateAdvisor,
   };
 }

@@ -1,6 +1,7 @@
 import { RiskEngine } from '../risk/engine';
 import { ProposalOrchestrator } from '../orchestrator/orchestrator';
 import { TradeExecutor } from '../execution/executor';
+import { InMemoryFillLedger } from '../execution/fillLedger';
 import { PaperExecutionProvider, StaticPriceOracle } from '../execution/paper';
 import { MockSecurityProvider } from '../security';
 import { IdempotencyService, RedisLike } from '../infra/idempotency';
@@ -47,6 +48,7 @@ export function buildPaperApp(prices: Record<string, number> = {}) {
   });
   const executor = new TradeExecutor({
     riskEngine, killSwitch, positions, proposals, executions, idempotency, provider, pnl,
+    fillLedger: new InMemoryFillLedger(positions, pnl),
   });
 
   return {
