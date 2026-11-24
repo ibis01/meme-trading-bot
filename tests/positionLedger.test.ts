@@ -39,14 +39,16 @@ describe('InMemoryPositionLedger (P0-4a, Rules 6/15/21)', () => {
     expect(p!.avgCostSol).toBeCloseTo(0.01, 10); // unchanged
   });
 
-  it('full close zeroes quantity and sets closedAt', async () => {
+  it('full close removes the open position from get() (Postgres parity — audit C1)', async () => {
     const l = ledger();
     await l.open({ tokenMint: MINT, tradeRequestId: 'tr1', quantity: 100, priceSol: 0.01, signature: 's1' });
     const r = await l.close({ tokenMint: MINT, tradeRequestId: 'tr2', quantity: 100, priceSol: 0.03, signature: 's2' });
     expect(r.remainingQuantity).toBe(0);
-    const p = await l.get(MINT);
-    expect(p!.quantity).toBe(0);
-    expect(p!.closedAt).toBeDefined();
+    // A fully closed position is NOT an open position: get() must return
+    // null exactly like PostgresPositionLedger (quantity > 0 filter), so
+    // no caller ever treats a flattened position as sellable again.
+    // The closed row remains auditable via getFills().
+    await expect(l.get(MINT)).resolves.toBeNull();
   });
 
   it('reopening after full close resets avg cost', async () => {

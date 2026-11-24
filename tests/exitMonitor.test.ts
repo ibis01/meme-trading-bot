@@ -3,6 +3,7 @@ import { MarketDataProvider } from '../src/data/types';
 import { MarketSnapshot } from '../src/strategy/types';
 import { ProposalOrchestrator } from '../src/orchestrator/orchestrator';
 import { TradeExecutor } from '../src/execution/executor';
+import { InMemoryFillLedger } from '../src/execution/fillLedger';
 import { RiskEngine } from '../src/risk/engine';
 import { MockSecurityProvider } from '../src/security';
 import { IdempotencyService, RedisLike } from '../src/infra/idempotency';
@@ -143,6 +144,7 @@ function buildHarness(opts: { rules?: Partial<ExitRulesConfig> } = {}) {
     idempotency: new IdempotencyService(new MockRedis()),
     provider,
     pnl,
+    fillLedger: new InMemoryFillLedger(positions, pnl),
   });
   const monitor = new ExitMonitor({
     positions,

@@ -57,6 +57,12 @@ function mkExecutor() {
       execute: forbidding('provider.execute'),
     },
     pnl: { addSol: forbidding('pnl.addSol') },
+    fillLedger: {
+      bookFill: forbidding('fillLedger.bookFill'),
+      isLedgerHealthy: forbidding('fillLedger.isLedgerHealthy'),
+      listRepairCandidates: forbidding('fillLedger.listRepairCandidates'),
+      markUnbookable: forbidding('fillLedger.markUnbookable'),
+    },
   };
 
   const allMocks: Array<[string, jest.Mock]> = Object.entries(deps).flatMap(

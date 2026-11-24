@@ -1,4 +1,5 @@
 import { TradeExecutor } from '../src/execution/executor';
+import { InMemoryFillLedger } from '../src/execution/fillLedger';
 import {
   PaperExecutionProvider,
   StaticPriceOracle,
@@ -90,6 +91,7 @@ function mkExecutor() {
     idempotency,
     provider,
     pnl,
+    fillLedger: new InMemoryFillLedger(positions, pnl),
   });
   return { executor, proposals, executions, killSwitch, positions };
 }

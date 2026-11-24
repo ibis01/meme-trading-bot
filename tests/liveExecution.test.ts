@@ -668,18 +668,77 @@ describe('LiveExecutionProvider (Rule 11 pipeline)', () => {
     expect(out.error).toBe('SELL_NO_TOKEN_AMOUNT');
   });
 
-  it('SELL with an unsafe raw amount (huge balance, 9 decimals) → FAILED (fail closed)', async () => {
+  it('SELL raw amount above 2^53 is quoted exactly via BigInt (audit C5 — old guard rejected it)', async () => {
+    const supplyCalls: unknown[][] = [];
+    const sellTx = {
+      meta: {
+        err: null,
+        fee: FEE_LAMPORTS,
+        preBalances: [1_000_000_000, 500_000_000_000, RENT_EXEMPT_TOKEN_ACCOUNT_LAMPORTS],
+        postBalances: [1_029_995_000, 500_000_000_000, RENT_EXEMPT_TOKEN_ACCOUNT_LAMPORTS],
+        preTokenBalances: [
+          { accountIndex: 2, mint: MINT, owner: wallet.publicKey.toBase58(), uiTokenAmount: { amount: '1000000000000000000' } },
+        ],
+        postTokenBalances: [
+          { accountIndex: 2, mint: MINT, owner: wallet.publicKey.toBase58(), uiTokenAmount: { amount: '0' } },
+        ],
+      },
+      transaction: { message: { accountKeys: [{ pubkey: wallet.publicKey.toBase58() }, { pubkey: 'Route1111' }, { pubkey: 'Ata2222222' }] } },
+    };
+    let soldRaw: string | null = null;
     const provider = makeProvider(
-      // 9 decimals: 1e9 tokens × 1e9 = 1e18 raw > Number.MAX_SAFE_INTEGER.
+      {
+        ...baseRpc,
+        getTransaction: () => sellTx,
+        getTokenSupply: (params: unknown[]) => {
+          supplyCalls.push(params);
+          return { value: { decimals: 9 } };
+        },
+      },
+      {
+        quote: () => ({ status: 200, body: goodQuoteBody }),
+        swap: () => ({ status: 200, body: goodSwapBody() }),
+      },
+    );
+    const jupQuoteSpy = jest.spyOn(JupiterClient.prototype, 'getQuote').mockImplementation(async function (
+      this: JupiterClient,
+      req: { amountRaw: string; inputMint: string; outputMint: string },
+    ) {
+      soldRaw = req.amountRaw;
+      return {
+        inputMint: req.inputMint,
+        outputMint: req.outputMint,
+        inAmount: req.amountRaw,
+        outAmount: '30000000',
+        priceImpactPct: '0.01',
+        slippageBps: 200,
+        raw: {},
+      };
+    } as never);
+
+    // 1e9 tokens × 1e9 decimals = 1e18 raw — beyond Number.MAX_SAFE_INTEGER.
+    // The pre-audit safe-integer guard rejected this outright; the BigInt
+    // path handles it exactly (audit C5).
+    const out = await provider.execute(makeReq({ side: 'SELL', tokenAmount: 1_000_000_000 }));
+    expect(out.status).toBe('CONFIRMED');
+    expect(soldRaw).toBe('1000000000000000000');
+    expect(out.filledTokenAmount).toBeCloseTo(1_000_000_000, 6);
+    jupQuoteSpy.mockRestore();
+  });
+
+  it('SELL with a non-finite tokenAmount → FAILED (fail closed)', async () => {
+    const provider = makeProvider(
       { ...baseRpc, getTokenSupply: () => ({ value: { decimals: 9 } }) },
       {
         quote: () => ({ status: 200, body: goodQuoteBody }),
         swap: () => ({ status: 200, body: goodSwapBody() }),
       },
     );
-    const out = await provider.execute(makeReq({ side: 'SELL', tokenAmount: 1_000_000_000 }));
+    // NaN fails the first guard (SELL_NO_TOKEN_AMOUNT — NaN > 0 is false);
+    // either way the request never reaches a quote.
+    const out = await provider.execute(makeReq({ side: 'SELL', tokenAmount: Number.NaN }));
     expect(out.status).toBe('FAILED');
-    expect(out.error).toBe('UNSAFE_TOKEN_RAW_AMOUNT');
+    expect(out.error).toBe('SELL_NO_TOKEN_AMOUNT');
   });
 
   it('Jupiter quote HTTP 500 → FAILED (JUPITER_QUOTE_FAILED)', async () => {

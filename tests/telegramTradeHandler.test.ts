@@ -1,6 +1,7 @@
 import { TelegramTradeHandler } from '../src/telegram/tradeHandlers';
 import { ProposalOrchestrator } from '../src/orchestrator/orchestrator';
 import { TradeExecutor } from '../src/execution/executor';
+import { InMemoryFillLedger } from '../src/execution/fillLedger';
 import { RiskEngine } from '../src/risk/engine';
 import { MockSecurityProvider } from '../src/security';
 import { IdempotencyService, RedisLike } from '../src/infra/idempotency';
@@ -70,6 +71,7 @@ function build() {
       new StaticPriceOracle({ [MINT]: 0.01 }),
     ),
     pnl,
+    fillLedger: new InMemoryFillLedger(positions, pnl),
   });
   const handler = new TelegramTradeHandler({
     orchestrator,

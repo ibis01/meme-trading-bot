@@ -3,6 +3,7 @@ import { FixtureFeed, MarketFeed } from '../src/data/feed';
 import { RiskEngine } from '../src/risk/engine';
 import { ProposalOrchestrator } from '../src/orchestrator/orchestrator';
 import { TradeExecutor } from '../src/execution/executor';
+import { InMemoryFillLedger } from '../src/execution/fillLedger';
 import { PaperExecutionProvider, StaticPriceOracle } from '../src/execution/paper';
 import { MockSecurityProvider } from '../src/security';
 import { IdempotencyService, RedisLike } from '../src/infra/idempotency';
@@ -81,7 +82,7 @@ function buildLoop(batch: MarketSnapshot[], oneShot = false) {
   const signals = new InMemorySignalStore();
   const provider = new PaperExecutionProvider(new StaticPriceOracle({ mint: 0.001 }));
   const orchestrator = new ProposalOrchestrator({ riskEngine, security, idempotency, proposals, signals });
-  const executor = new TradeExecutor({ riskEngine, killSwitch, positions, proposals, executions, idempotency, provider, pnl });
+  const executor = new TradeExecutor({ riskEngine, killSwitch, positions, proposals, executions, idempotency, provider, pnl, fillLedger: new InMemoryFillLedger(positions, pnl) });
 
   const feed = oneShot
     ? new OneShotFeed(batch)
@@ -172,7 +173,8 @@ describe('SignalLoop (Rules 22, 24, 34)', () => {
       executions: new InMemoryExecutionStore(),
       idempotency: new IdempotencyService(new MockRedis()),
       provider: new PaperExecutionProvider(new StaticPriceOracle({ mint: 0.001 })),
-      pnl: new InMemoryPnlStore(),
+      pnl,
+      fillLedger: new InMemoryFillLedger(positions, pnl),
     });
 
     const loop = new SignalLoop(

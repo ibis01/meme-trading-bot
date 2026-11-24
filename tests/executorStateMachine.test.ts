@@ -1,4 +1,5 @@
 import { TradeExecutor } from '../src/execution/executor';
+import { InMemoryFillLedger } from '../src/execution/fillLedger';
 import {
   PaperExecutionProvider,
   StaticPriceOracle,
@@ -108,6 +109,7 @@ function mkExecutor(provider: ExecutionProvider) {
     idempotency,
     provider,
     pnl,
+    fillLedger: new InMemoryFillLedger(positions, pnl),
   });
   return { executor, proposals, executions, idempotency };
 }
@@ -210,6 +212,7 @@ describe('TradeExecutor — state machine (P1-6)', () => {
       idempotency,
       provider,
       pnl,
+      fillLedger: new InMemoryFillLedger(positions, pnl),
     });
     const r = await executor.execute(proposal('ks'));
     expect(r.kind).toBe('REJECTED');
