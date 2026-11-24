@@ -30,6 +30,13 @@ export const envSchema = z.object({
   MAX_DEV_WALLET_PERCENT: z.coerce.number().min(0).max(100).default(5),
   MAX_QUOTE_AGE_MS: z.coerce.number().int().positive().default(5000),
 
+  // Paper-mode realism (audit 2026-11-09, finding F1). Paper fills must use
+  // real market prices and include trading costs, otherwise the soak's PnL
+  // is structurally zero and proves nothing about the strategy.
+  EQUITY_SOL: z.coerce.number().positive().default(10),
+  PAPER_FEE_BPS: z.coerce.number().min(0).max(10_000).default(25),
+  PAPER_SLIPPAGE_BPS: z.coerce.number().min(0).max(10_000).default(50),
+
   // Exit monitor (audit fix H1)
   EXIT_STOP_LOSS_PERCENT: z.coerce.number().min(0).default(30),
   EXIT_TAKE_PROFIT_PERCENT: z.coerce.number().min(0).default(50),

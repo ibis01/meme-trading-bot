@@ -1,4 +1,5 @@
 import { SignalLoopDeps, SignalLoopOptions, TickResult } from './signalLoopTypes';
+import { MarketSnapshot } from '../strategy/types';
 import { logger } from '../utils/logger';
 
 export * from './signalLoopTypes';
@@ -39,37 +40,61 @@ export class SignalLoop {
 
     for (const market of snapshots) {
       if (this.stopping) break;
-      const signal = this.deps.strategy.evaluate(market, this.deps.strategyContext);
-      if (!signal) {
-        // Debug-level so a busy loop doesn't flood info logs. Set LOG_LEVEL=debug
-        // when investigating why a strategy is silent.
-        logger.debug(
+      // Audit 2026-11-09 (finding F4): per-signal isolation. One throwing
+      // signal (e.g. a Redis hiccup inside idempotency) must not abort the
+      // remaining snapshots of the tick — Rule 23: classify, recover, never
+      // let one failure silently skip the rest of the batch.
+      try {
+        await this.processOne(market, result);
+      } catch (err) {
+        result.failed += 1;
+        logger.error(
           {
-            event: 'NO_SIGNAL',
+            event: 'SIGNAL_PROCESSING_ERROR',
             token: market.tokenMint,
-            priceChange5mPercent: market.priceChange5mPercent,
-            priceChange1hPercent: market.priceChange1hPercent,
+            err,
           },
-          'Strategy produced no signal',
+          'Signal processing threw — continuing with remaining snapshots',
         );
-        continue;
       }
-      result.signals += 1;
-
-      const orch = await this.deps.orchestrator.process(signal);
-      if (orch.kind === 'REJECTED') { result.rejected += 1; continue; }
-      if (orch.kind === 'DUPLICATE') { result.duplicates += 1; continue; }
-      if (orch.kind === 'ERROR') { result.failed += 1; continue; }
-      result.approved += 1;
-
-      const exec = await this.deps.executor.execute(orch.stored);
-      if (exec.kind === 'CONFIRMED') result.executed += 1;
-      else if (exec.kind === 'DUPLICATE') result.duplicates += 1;
-      else result.failed += 1;
     }
 
     logger.info({ event: 'TICK', ...result }, 'Signal loop tick complete');
     return result;
+  }
+
+  /** Evaluate one snapshot through strategy → orchestrator → executor. */
+  private async processOne(
+    market: MarketSnapshot,
+    result: TickResult,
+  ): Promise<void> {
+    const signal = this.deps.strategy.evaluate(market, this.deps.strategyContext);
+    if (!signal) {
+      // Debug-level so a busy loop doesn't flood info logs. Set LOG_LEVEL=debug
+      // when investigating why a strategy is silent.
+      logger.debug(
+        {
+          event: 'NO_SIGNAL',
+          token: market.tokenMint,
+          priceChange5mPercent: market.priceChange5mPercent,
+          priceChange1hPercent: market.priceChange1hPercent,
+        },
+        'Strategy produced no signal',
+      );
+      return;
+    }
+    result.signals += 1;
+
+    const orch = await this.deps.orchestrator.process(signal);
+    if (orch.kind === 'REJECTED') { result.rejected += 1; return; }
+    if (orch.kind === 'DUPLICATE') { result.duplicates += 1; return; }
+    if (orch.kind === 'ERROR') { result.failed += 1; return; }
+    result.approved += 1;
+
+    const exec = await this.deps.executor.execute(orch.stored);
+    if (exec.kind === 'CONFIRMED') result.executed += 1;
+    else if (exec.kind === 'DUPLICATE') result.duplicates += 1;
+    else result.failed += 1;
   }
 
   /** Start periodic ticks. Overlapping ticks are skipped, not queued. */
