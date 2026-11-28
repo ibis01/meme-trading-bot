@@ -53,6 +53,27 @@ export function evaluateRisk(
     evidence.killSwitchActive = true; // exit under kill switch — audit event trail
   }
 
+  // Audit 2026-11-09 (fail-closed numerics): NaN/negative gate inputs pass
+  // every `x > limit` comparison, so "no evidence" silently became a pass on
+  // the FINAL authority (Rule 6/7). NaN is not evidence of safety — reject.
+  // BUY amount must be finite and strictly positive; zero/negative buys are
+  // meaningless risk, and NaN amountSol would corrupt paper fills downstream.
+  if (isBuy && (!Number.isFinite(proposal.amountSol) || proposal.amountSol <= 0)) {
+    return { allowed: false, reason: 'INVALID_AMOUNT_SOL', evidence };
+  }
+  if (
+    !Number.isFinite(proposal.expectedSlippageBps) ||
+    proposal.expectedSlippageBps < 0
+  ) {
+    return { allowed: false, reason: 'INVALID_SLIPPAGE_BPS', evidence };
+  }
+  if (
+    !Number.isFinite(proposal.expectedPriceImpactBps) ||
+    proposal.expectedPriceImpactBps < 0
+  ) {
+    return { allowed: false, reason: 'INVALID_PRICE_IMPACT_BPS', evidence };
+  }
+
   // Rule 11 — never submit a stale quote (both sides: exits act on fresh state too)
   if (snapshot.now - proposal.quoteFetchedAt > config.MAX_QUOTE_AGE_MS) {
     return { allowed: false, reason: 'STALE_QUOTE', evidence };

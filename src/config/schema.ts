@@ -30,6 +30,13 @@ export const envSchema = z.object({
   MAX_DEV_WALLET_PERCENT: z.coerce.number().min(0).max(100).default(5),
   MAX_QUOTE_AGE_MS: z.coerce.number().int().positive().default(5000),
 
+  // Paper-mode realism (audit 2026-11-09, finding F1). Paper fills must use
+  // real market prices and include trading costs, otherwise the soak's PnL
+  // is structurally zero and proves nothing about the strategy.
+  EQUITY_SOL: z.coerce.number().positive().default(10),
+  PAPER_FEE_BPS: z.coerce.number().min(0).max(10_000).default(25),
+  PAPER_SLIPPAGE_BPS: z.coerce.number().min(0).max(10_000).default(50),
+
   // Exit monitor (audit fix H1)
   EXIT_STOP_LOSS_PERCENT: z.coerce.number().min(0).default(30),
   EXIT_TAKE_PROFIT_PERCENT: z.coerce.number().min(0).default(50),
@@ -90,6 +97,23 @@ export const envSchema = z.object({
   JUPITER_API_URL: z.string().url().default('https://quote-api.jup.ag/v6'),
   LIVE_CONFIRM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   LIVE_CONFIRM_POLL_MS: z.coerce.number().int().positive().default(2_000),
+
+  // ── Audit 2026-11-24: gated production launch (Gates 0–2) ─────────────
+  // Gate 3 minimum: bind the trading wallet's public key at startup. In
+  // live mode a mismatch between the loaded key and this value is fatal —
+  // the configured key is not the intended trading wallet.
+  EXPECTED_WALLET_PUBKEY: z.string().min(32).optional(),
+  // Fail-closed startup (Gate 1d): require Postgres/Redis/schema/provider/
+  // market-data/wallet readiness. Implied (mandatory) for manual+live; set
+  // true on paper soaks — launch sequence step 1: paper connects to REAL
+  // Postgres/Redis, no silent in-memory degradation.
+  REQUIRE_PERSISTENT_STATE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  // Reconciliation runner cadence: resolves SUBMITTED/UNKNOWN executions
+  // on-chain and re-books fills that never reached the ledger (repair sweep).
+  RECONCILIATION_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
 });
 
 export type Env = z.infer<typeof envSchema>;
